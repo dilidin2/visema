@@ -1,0 +1,70 @@
+/* Visema Overlay Styles
+ * Designed for OBS Browser Source with transparency.
+ * No external dependencies — everything inline. */
+
+*,
+*::before,
+*::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html,
+body {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    overflow: hidden;
+    font-family: sans-serif;
+}
+
+#overlay-container {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+}
+
+/* ── GIF ─────────────────────────────────────────────── */
+
+.gif-image {
+    position: absolute;
+    opacity: 0;
+    transition: opacity 0.4s ease-in-out;
+    image-rendering: auto;
+}
+
+.gif-image.visible {
+    opacity: 1;
+}
+
+/* ── Position presets ────────────────────────────────── */
+
+#overlay-container.position-center .gif-image {
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+}
+
+#overlay-container.position-bottom-left .gif-image {
+    bottom: 10%;
+    left: 5%;
+}
+
+#overlay-container.position-bottom-right .gif-image {
+    bottom: 10%;
+    right: 5%;
+}
+
+#overlay-container.position-top-left .gif-image {
+    top: 10%;
+    left: 5%;
+}
+
+#overlay-container.position-top-right .gif-image {
+    top: 10%;
+    right: 5%;
+}

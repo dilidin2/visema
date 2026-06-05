@@ -1,0 +1,43 @@
+twitch:
+  target_channel: "your_twitch_username"
+  bot_channel: "your_bot_username"
+  reward_gif: "Show a GIF"
+  reward_sound: "Play a Sound"
+
+gif:
+  allowed_domains:
+    - "i.giphy.com"
+    - "media.giphy.com"
+    - "media0.giphy.com"
+    - "media1.giphy.com"
+    - "media2.giphy.com"
+    - "media3.giphy.com"
+    - "media4.giphy.com"
+  display_duration_seconds: 8
+  cooldown_seconds: 3
+  max_queue_size: 5
+  size_percent: 40
+
+audio:
+  sounds_dir: "sounds"
+  allowed_extensions:
+    - ".mp3"
+    - ".ogg"
+    - ".wav"
+  volume: 1.0
+  cooldown_seconds: 3
+  max_queue_size: 5
+
+overlay:
+  port: 9876
+  position: "center"
+
+commands:
+  gif_response: >
+    🎬 To use "Show a GIF", paste a direct GIF link from Giphy (giphy.com).
+    Right-click any GIF → "Copy Image Address". The link must start with
+    i.giphy.com or media.giphy.com. SFW only — invalid links are refunded.
+  sound_response: >
+    🔊 To use "Play a Sound", type the name of a sound from the list.
+    Use !soundlist to see all available sounds.
+  soundlist_response: "auto"

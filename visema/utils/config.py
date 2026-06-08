@@ -50,6 +50,7 @@ class CommandSettings:
 @dataclass
 class TwitchSettings:
     target_channel: str = ""
+    target_channel_id: str = ""
     bot_channel: str = ""
     reward_gif: str = "Show a GIF"
     reward_sound: str = "Play a Sound"
@@ -98,6 +99,7 @@ def load_settings() -> Settings:
     if "twitch" in cfg:
         d = cfg["twitch"]
         settings.twitch.target_channel = d.get("target_channel", settings.twitch.target_channel)
+        settings.twitch.target_channel_id = d.get("target_channel_id", settings.twitch.target_channel_id)
         settings.twitch.bot_channel = d.get("bot_channel", settings.twitch.bot_channel)
         settings.twitch.reward_gif = d.get("reward_gif", settings.twitch.reward_gif)
         settings.twitch.reward_sound = d.get("reward_sound", settings.twitch.reward_sound)

@@ -11,6 +11,7 @@ import sys
 import threading
 
 import uvicorn
+from twitchAPI.twitch import Twitch
 
 from visema.media import queue as queue_module
 from visema.media import validator
@@ -64,23 +65,19 @@ def start_server(settings, stop_event: threading.Event) -> threading.Thread:
     logger.info("Overlay server running at http://127.0.0.1:%d", settings.overlay.port)
     logger.info("Overlay page: http://127.0.0.1:%d/overlay", settings.overlay.port)
     logger.info("WebSocket endpoint: ws://127.0.0.1:%d/ws", settings.overlay.port)
+    logger.info("")
+    logger.info("── OBS SETUP ─────────────────────────────────────────────────")
+    logger.info("Add a Browser Source in OBS with URL: http://127.0.0.1:%d/overlay", settings.overlay.port)
+    logger.info("Set width/height to your canvas (e.g. 1920x1080), enable 'Allow transparency'")
+    logger.info("─────────────────────────────────────────────────────────────")
 
     return thread
 
 
 async def get_channel_id(client: Twitch, channel_name: str) -> str:
-    """Resolve a channel name to its Twitch user ID."""
-    from twitchAPI helions import Helions
-
-    helions = Helions()
-    users = await helions.get_users(login=channel_name)
-    if users.get("data"):
-        return users["data"][0]["id"]
-
-    # Fallback: use the authenticated client
-    users = await client.get_users(login=channel_name)
-    if users.get("data"):
-        return users["data"][0]["id"]
+    """Resolve a channel name to its Twitch user ID via the authenticated client."""
+    async for user in client.get_users(logins=[channel_name]):
+        return user.id
 
     raise ValueError(f"Could not resolve channel ID for '{channel_name}'")
 
@@ -111,19 +108,27 @@ async def run() -> None:
     await media_queue.start()
 
     # ── Authenticate Twitch accounts ────────────────────
-    broadcaster_client, bot_client, broadcaster_auth, bot_auth = await auth_module.setup_auth(
+    broadcaster_client, bot_client = await auth_module.setup_auth(
         client_id=settings.twitch_client_id,
         client_secret=settings.twitch_client_secret,
         broadcaster_name=settings.twitch.target_channel,
         bot_name=settings.twitch.bot_channel,
     )
 
-    # ── Resolve channel ID ──────────────────────────────
-    try:
-        channel_id = await get_channel_id(broadcaster_client, settings.twitch.target_channel)
-    except Exception:
-        logger.error("Failed to resolve channel ID for '%s'", settings.twitch.target_channel)
-        sys.exit(1)
+    # ── Resolve channel IDs ─────────────────────────────
+    if settings.twitch.target_channel_id:
+        channel_id = settings.twitch.target_channel_id
+    else:
+        try:
+            channel_id = await get_channel_id(broadcaster_client, settings.twitch.target_channel)
+        except Exception:
+            logger.error("Failed to resolve channel ID for '%s'", settings.twitch.target_channel)
+            sys.exit(1)
+
+    # Resolve bot user ID from the authenticated client (guaranteed to match the OAuth token)
+    async for user in bot_client.get_users():
+        bot_user_id = user.id
+        break
 
     logger.info("Target channel: %s (ID: %s)", settings.twitch.target_channel, channel_id)
 
@@ -134,12 +139,15 @@ async def run() -> None:
         queue=media_queue,
         settings=settings,
         channel_id=channel_id,
+        bot_user_id=bot_user_id,
     )
 
     # ── Start chat listener ─────────────────────────────
     chat_task = await chat_module.start_chat_listener(
         bot_client=bot_client,
+        target_channel_name=settings.twitch.target_channel,
         target_channel_id=channel_id,
+        bot_user_id=bot_user_id,
         command_settings=settings.commands,
     )
 

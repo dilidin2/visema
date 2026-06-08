@@ -1,7 +1,7 @@
 twitch:
-  target_channel: "dilidindilidon" # broadcaster — where redemptions happen
+  target_channel: "your_broadcaster_username" # broadcaster — where redemptions happen
   target_channel_id: "" # optional — numeric channel ID, skips API resolution if set
-  bot_channel: "unadelleexdidili" # bot — sends chat messages
+  bot_channel: "your_bot_username" # bot — sends chat messages
   # Exact names of your Channel Points rewards (must match Twitch UI exactly)
   # The bot matches redemptions by reward ID (resolved from these names via API),
   # so only the configured rewards trigger actions. Other redemptions are ignored.

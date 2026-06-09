@@ -1,0 +1,23 @@
+[project]
+name = "visema"
+version = "0.1.0"
+description = "Twitch Channel Points GIF/Sound overlay bot"
+requires-python = ">=3.10"
+dependencies = [
+    "twitchAPI>=4.5.0",
+    "fastapi",
+    "uvicorn[standard]",
+    "websockets",
+    "python-dotenv",
+    "pyyaml",
+]
+
+[project.scripts]
+visema = "visema.main:main"
+
+[tool.setuptools.packages.find]
+include = ["visema*"]
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"

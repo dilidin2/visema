@@ -5,8 +5,8 @@ twitch:
   # Exact names of your Channel Points rewards (must match Twitch UI exactly)
   # The bot matches redemptions by reward ID (resolved from these names via API),
   # so only the configured rewards trigger actions. Other redemptions are ignored.
-  reward_gif: "Show a GIF"
-  reward_sound: "Play a Sound"
+  reward_gif: "Mostra una GIF"
+  reward_sound: "Suona Suono"
 
 gif:
   allowed_domains:

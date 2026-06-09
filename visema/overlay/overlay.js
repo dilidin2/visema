@@ -11,6 +11,7 @@
     var ws = null;
     var reconnectDelay = 1000;
     var audioDone = null; // deferred to signal queue worker when audio finishes
+    var gifDone = null; // deferred to signal queue worker when GIF is fully removed
 
     // ── WebSocket connection ────────────────────────────
 
@@ -28,6 +29,7 @@
         ws.onclose = function () {
             console.log("[visema] WebSocket disconnected, reconnecting...");
             resolveAudioDone(); // unblock any pending audio
+            resolveGifDone(); // unblock any pending GIF
             setTimeout(connect, reconnectDelay);
             reconnectDelay = Math.min(reconnectDelay * 2, 10000);
         };
@@ -86,6 +88,10 @@
                 if (img.parentNode) {
                     img.parentNode.removeChild(img);
                 }
+                // Notify queue worker that GIF is fully removed
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({ ack: "gif_done" }));
+                }
             }, 500);
         }, durationMs);
     }
@@ -142,6 +148,16 @@
                 audioDone._callback();
             }
             audioDone = null;
+        }
+    }
+
+    function resolveGifDone() {
+        if (gifDone) {
+            gifDone._resolved = true;
+            if (gifDone._callback) {
+                gifDone._callback();
+            }
+            gifDone = null;
         }
     }
 

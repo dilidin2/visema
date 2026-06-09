@@ -32,8 +32,9 @@ class MediaQueue:
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
         self._audio_done_event: Optional[asyncio.Event] = None
+        self._gif_done_event: Optional[asyncio.Event] = None
 
-        # Register ack callback so overlay can signal audio completion
+        # Register ack callback so overlay can signal completion
         set_ack_callback(self._on_ack)
 
     @staticmethod
@@ -46,6 +47,10 @@ class MediaQueue:
         """Handle ack messages from the overlay."""
         if ack_type == "audio_done" and self._audio_done_event:
             self._audio_done_event.set()
+        elif ack_type == "gif_done" and self._gif_done_event:
+            self._gif_done_event.set()
+        elif ack_type == "audio_playing":
+            pass  # informational only, no action needed
 
     async def enqueue(self, item: dict) -> bool:
         """Add an item to the queue. Returns True if successful, False if full."""
@@ -114,7 +119,10 @@ class MediaQueue:
             # Wait for completion
             if item_type == "audio":
                 await self._wait_for_audio_done()
-            # GIFs auto-complete via CSS timeout in overlay, no ack needed
+            elif item_type == "gif":
+                await self._wait_for_gif_done(
+                    timeout=item.get("duration", 8) + 1.0
+                )
 
             # Cooldown before next item
             if self._cooldown > 0:
@@ -131,6 +139,17 @@ class MediaQueue:
             logger.warning("Audio completion timeout (%.0fs), continuing", timeout)
         finally:
             self._audio_done_event = None
+
+    async def _wait_for_gif_done(self, timeout: float = 9.0) -> None:
+        """Wait for the overlay to signal GIF removal completion."""
+        self._gif_done_event = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._gif_done_event.wait(), timeout=timeout)
+            logger.debug("GIF completion received from overlay")
+        except asyncio.TimeoutError:
+            logger.warning("GIF completion timeout (%.0fs), continuing", timeout)
+        finally:
+            self._gif_done_event = None
 
     async def clear(self) -> int:
         """Clear all pending items from the queue. Returns number of items cleared."""

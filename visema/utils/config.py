@@ -54,6 +54,8 @@ class TwitchSettings:
     bot_channel: str = ""
     reward_gif: str = "Show a GIF"
     reward_sound: str = "Play a Sound"
+    reward_gif_cost: int = 500
+    reward_sound_cost: int = 300
 
 
 @dataclass
@@ -103,6 +105,8 @@ def load_settings() -> Settings:
         settings.twitch.bot_channel = d.get("bot_channel", settings.twitch.bot_channel)
         settings.twitch.reward_gif = d.get("reward_gif", settings.twitch.reward_gif)
         settings.twitch.reward_sound = d.get("reward_sound", settings.twitch.reward_sound)
+        settings.twitch.reward_gif_cost = d.get("reward_gif_cost", settings.twitch.reward_gif_cost)
+        settings.twitch.reward_sound_cost = d.get("reward_sound_cost", settings.twitch.reward_sound_cost)
 
     # GIF
     if "gif" in cfg:

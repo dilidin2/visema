@@ -7,6 +7,8 @@ twitch:
   # so only the configured rewards trigger actions. Other redemptions are ignored.
   reward_gif: "Mostra una GIF"
   reward_sound: "Suona Suono"
+  reward_gif_cost: 500
+  reward_sound_cost: 300
 
 gif:
   allowed_domains:

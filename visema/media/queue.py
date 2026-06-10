@@ -31,8 +31,9 @@ class MediaQueue:
         self._broadcast = broadcast or self._default_broadcast
         self._running = False
         self._worker_task: Optional[asyncio.Task] = None
-        self._audio_done_event: Optional[asyncio.Event] = None
-        self._gif_done_event: Optional[asyncio.Event] = None
+        # Pre-created events; cleared before broadcast so acks arriving early are never lost
+        self._audio_done_event: asyncio.Event = asyncio.Event()
+        self._gif_done_event: asyncio.Event = asyncio.Event()
 
         # Register ack callback so overlay can signal completion
         set_ack_callback(self._on_ack)
@@ -45,9 +46,9 @@ class MediaQueue:
 
     async def _on_ack(self, ack_type: str) -> None:
         """Handle ack messages from the overlay."""
-        if ack_type == "audio_done" and self._audio_done_event:
+        if ack_type == "audio_done":
             self._audio_done_event.set()
-        elif ack_type == "gif_done" and self._gif_done_event:
+        elif ack_type == "gif_done":
             self._gif_done_event.set()
         elif ack_type == "audio_playing":
             pass  # informational only, no action needed
@@ -110,6 +111,13 @@ class MediaQueue:
             item_type = item.get("type", "unknown")
             logger.info("Processing %s: %s", item_type, item)
 
+            # Arm the completion event BEFORE broadcasting so any ack that
+            # arrives before we enter the wait is not lost.
+            if item_type == "audio":
+                self._audio_done_event.clear()
+            elif item_type == "gif":
+                self._gif_done_event.clear()
+
             # Broadcast to overlay
             try:
                 await self._broadcast(item)
@@ -131,25 +139,19 @@ class MediaQueue:
 
     async def _wait_for_audio_done(self, timeout: float = 30.0) -> None:
         """Wait for the overlay to signal audio playback completion."""
-        self._audio_done_event = asyncio.Event()
         try:
             await asyncio.wait_for(self._audio_done_event.wait(), timeout=timeout)
             logger.debug("Audio completion received from overlay")
         except asyncio.TimeoutError:
             logger.warning("Audio completion timeout (%.0fs), continuing", timeout)
-        finally:
-            self._audio_done_event = None
 
     async def _wait_for_gif_done(self, timeout: float = 9.0) -> None:
         """Wait for the overlay to signal GIF removal completion."""
-        self._gif_done_event = asyncio.Event()
         try:
             await asyncio.wait_for(self._gif_done_event.wait(), timeout=timeout)
             logger.debug("GIF completion received from overlay")
         except asyncio.TimeoutError:
             logger.warning("GIF completion timeout (%.0fs), continuing", timeout)
-        finally:
-            self._gif_done_event = None
 
     async def clear(self) -> int:
         """Clear all pending items from the queue. Returns number of items cleared."""

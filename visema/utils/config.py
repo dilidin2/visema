@@ -15,6 +15,9 @@ _PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
 _ENV_PATH = _PROJECT_ROOT / ".env"
 _CONFIG_PATH = _PROJECT_ROOT / "config.yaml"
 
+# Public Visema app — override via TWITCH_CLIENT_ID in .env for forks
+DEFAULT_CLIENT_ID = "fdf2c1k8jj7j6nfctiyo2ijavckiv5"
+
 
 @dataclass
 class GifSettings:
@@ -49,11 +52,8 @@ class CommandSettings:
 
 @dataclass
 class TwitchSettings:
-    target_channel: str = ""
-    target_channel_id: str = ""
-    bot_channel: str = ""
-    reward_gif: str = "Show a GIF"
-    reward_sound: str = "Play a Sound"
+    reward_gif: str = "Mostra una GIF"
+    reward_sound: str = "Suona Suono"
     reward_gif_cost: int = 500
     reward_sound_cost: int = 300
 
@@ -67,13 +67,8 @@ class Settings:
     commands: CommandSettings = field(default_factory=CommandSettings)
     sounds_dir_path: Path = field(default_factory=lambda: _PROJECT_ROOT / "sounds")
 
-    # Twitch credentials from .env
-    twitch_client_id: str = ""
-    twitch_client_secret: str = ""
-    broadcaster_access_token: str = ""
-    broadcaster_refresh_token: str = ""
-    bot_access_token: str = ""
-    bot_refresh_token: str = ""
+    # From .env
+    twitch_client_id: str = DEFAULT_CLIENT_ID
 
 
 def load_settings() -> Settings:
@@ -82,13 +77,8 @@ def load_settings() -> Settings:
 
     settings = Settings()
 
-    # ── Load .env credentials ───────────────────────────
-    settings.twitch_client_id = os.getenv("TWITCH_CLIENT_ID", "")
-    settings.twitch_client_secret = os.getenv("TWITCH_CLIENT_SECRET", "")
-    settings.broadcaster_access_token = os.getenv("BROADCASTER_ACCESS_TOKEN", "")
-    settings.broadcaster_refresh_token = os.getenv("BROADCASTER_REFRESH_TOKEN", "")
-    settings.bot_access_token = os.getenv("BOT_ACCESS_TOKEN", "")
-    settings.bot_refresh_token = os.getenv("BOT_REFRESH_TOKEN", "")
+    # ── Load .env values ────────────────────────────────
+    settings.twitch_client_id = os.getenv("TWITCH_CLIENT_ID", DEFAULT_CLIENT_ID)
 
     # ── Load config.yaml ────────────────────────────────
     if _CONFIG_PATH.exists():
@@ -100,9 +90,6 @@ def load_settings() -> Settings:
     # Twitch
     if "twitch" in cfg:
         d = cfg["twitch"]
-        settings.twitch.target_channel = d.get("target_channel", settings.twitch.target_channel)
-        settings.twitch.target_channel_id = d.get("target_channel_id", settings.twitch.target_channel_id)
-        settings.twitch.bot_channel = d.get("bot_channel", settings.twitch.bot_channel)
         settings.twitch.reward_gif = d.get("reward_gif", settings.twitch.reward_gif)
         settings.twitch.reward_sound = d.get("reward_sound", settings.twitch.reward_sound)
         settings.twitch.reward_gif_cost = d.get("reward_gif_cost", settings.twitch.reward_gif_cost)

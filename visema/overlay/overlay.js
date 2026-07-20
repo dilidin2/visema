@@ -10,8 +10,8 @@
     var container = document.getElementById("overlay-container");
     var ws = null;
     var reconnectDelay = 1000;
-    var audioDone = null; // deferred to signal queue worker when audio finishes
-    var gifDone = null; // deferred to signal queue worker when GIF is fully removed
+    var audioDone = false; // true while waiting for audio to finish
+    var gifDone = false;   // true while waiting for GIF to finish
 
     // ── WebSocket connection ────────────────────────────
 
@@ -29,7 +29,7 @@
         ws.onclose = function () {
             console.log("[visema] WebSocket disconnected, reconnecting...");
             resolveAudioDone(); // unblock any pending audio
-            resolveGifDone(); // unblock any pending GIF
+            resolveGifDone();   // unblock any pending GIF
             setTimeout(connect, reconnectDelay);
             reconnectDelay = Math.min(reconnectDelay * 2, 10000);
         };
@@ -89,9 +89,7 @@
                     img.parentNode.removeChild(img);
                 }
                 // Notify queue worker that GIF is fully removed
-                if (ws && ws.readyState === WebSocket.OPEN) {
-                    ws.send(JSON.stringify({ ack: "gif_done" }));
-                }
+                resolveGifDone();
             }, 500);
         }, durationMs);
     }
@@ -107,9 +105,7 @@
         var audio = new Audio(src);
         audio.volume = Math.min(Math.max(volume, 0.0), 1.0);
 
-        // Create a deferred so the queue worker can await completion
-        var deferred = {};
-        audioDone = deferred;
+        audioDone = true; // mark as pending
 
         audio.addEventListener("canplaythrough", function () {
             audio.play().catch(function (err) {
@@ -129,7 +125,7 @@
 
         // Timeout fallback: if audio doesn't end within 30s, unblock
         setTimeout(function () {
-            if (audioDone === deferred) {
+            if (audioDone) {
                 console.warn("[visema] Audio timeout for:", src);
                 resolveAudioDone();
             }
@@ -143,21 +139,19 @@
 
     function resolveAudioDone() {
         if (audioDone) {
-            audioDone._resolved = true;
-            if (audioDone._callback) {
-                audioDone._callback();
+            audioDone = false;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ ack: "audio_done" }));
             }
-            audioDone = null;
         }
     }
 
     function resolveGifDone() {
         if (gifDone) {
-            gifDone._resolved = true;
-            if (gifDone._callback) {
-                gifDone._callback();
+            gifDone = false;
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ ack: "gif_done" }));
             }
-            gifDone = null;
         }
     }
 

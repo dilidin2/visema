@@ -3,24 +3,22 @@ EventSub WebSocket listener for Channel Points redemptions.
 
 Subscribes to channel.channel_points_custom_reward_redemption.add
 and routes events through validation → queue → broadcast.
-Mirrors the pattern from twitch-tts-git with re-auth handling.
+Uses the same Twitch client for EventSub, chat, and API calls (single-account design).
 """
 
 import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Callable, Dict, Optional
+from typing import Optional
 
 from twitchAPI.twitch import Twitch
+from twitchAPI.type import CustomRewardRedemptionStatus, TwitchAPIException
 
 from visema.media import validator
 from visema.media.queue import MediaQueue
 
 logger = logging.getLogger(__name__)
-
-# EventSub topic constant
-REDEEM_TOPIC = "channel.channel_points_custom_reward_redemption.add"
 
 # Local registry of reward IDs created by this app
 _REWARDS_FILE = Path(__file__).resolve().parent.parent.parent / ".visema_rewards.json"
@@ -31,8 +29,7 @@ class RedemptionHandler:
 
     def __init__(
         self,
-        broadcaster_client: Twitch,
-        bot_client: Twitch,
+        twitch_client: Twitch,
         queue: MediaQueue,
         target_channel_id: str,
         bot_user_id: str,
@@ -41,11 +38,12 @@ class RedemptionHandler:
         gif_settings,
         audio_settings,
         command_settings,
+        chat_client: Optional[Twitch] = None,
         reward_gif_cost: int = 500,
         reward_sound_cost: int = 300,
     ):
-        self.broadcaster_client = broadcaster_client
-        self.bot_client = bot_client
+        self.twitch_client = twitch_client  # MUST be broadcaster — all reward API calls use this
+        self.chat_client = chat_client  # if set, used ONLY for chat messages (dual-account mode)
         self.queue = queue
         self.target_channel_id = target_channel_id
         self.bot_user_id = bot_user_id
@@ -67,18 +65,18 @@ class RedemptionHandler:
         self._gif_reward_owned = False
         self._sound_reward_owned = False
 
-        # Store for re-subscription after re-auth
-        self._eventsub = None
+        logger.info(
+            "RedemptionHandler — target_channel_id=%s, chat_client=%s",
+            self.target_channel_id,
+            "bot" if chat_client else "same (broadcaster)",
+        )
 
     async def resolve_reward_ids(self) -> None:
         """Fetch custom reward IDs from the Twitch API and check ownership."""
-        # Load the local registry of reward IDs created by this app
         registry = self._load_rewards_registry()
 
         try:
-            rewards = await self.broadcaster_client.get_custom_reward(
-                self.target_channel_id
-            )
+            rewards = await self.twitch_client.get_custom_reward(self.target_channel_id)
         except Exception:
             logger.exception("Failed to fetch channel points rewards")
             return
@@ -119,7 +117,6 @@ class RedemptionHandler:
             )
 
     def _load_rewards_registry(self) -> dict:
-        """Load the local registry of reward IDs created by this app."""
         if _REWARDS_FILE.exists():
             try:
                 with open(_REWARDS_FILE, "r") as f:
@@ -129,7 +126,6 @@ class RedemptionHandler:
         return {}
 
     def _save_rewards_registry(self, registry: dict) -> None:
-        """Save the local registry of reward IDs created by this app."""
         try:
             with open(_REWARDS_FILE, "w") as f:
                 json.dump(registry, f, indent=2)
@@ -137,15 +133,10 @@ class RedemptionHandler:
         except Exception:
             logger.warning("Failed to save rewards registry")
 
-    async def _create_reward(
-        self,
-        title: str,
-        cost: int,
-        prompt: str,
-    ) -> Optional[str]:
+    async def _create_reward(self, title: str, cost: int, prompt: str) -> Optional[str]:
         """Create a custom reward via API. Returns the reward ID or None on failure."""
         try:
-            reward = await self.broadcaster_client.create_custom_reward(
+            reward = await self.twitch_client.create_custom_reward(
                 broadcaster_id=self.target_channel_id,
                 title=title,
                 cost=cost,
@@ -165,7 +156,6 @@ class RedemptionHandler:
         """Create rewards via API if they don't exist yet."""
         registry = self._load_rewards_registry()
 
-        # Ensure GIF reward
         if not self.reward_gif_id:
             reward_id = await self._create_reward(
                 title=self.reward_gif_name,
@@ -177,7 +167,6 @@ class RedemptionHandler:
                 registry["gif_reward_id"] = reward_id
                 self._gif_reward_owned = True
 
-        # Ensure audio reward
         if not self.reward_sound_id:
             reward_id = await self._create_reward(
                 title=self.reward_sound_name,
@@ -189,7 +178,6 @@ class RedemptionHandler:
                 registry["sound_reward_id"] = reward_id
                 self._sound_reward_owned = True
 
-        # Save registry if we created any rewards
         if self.reward_gif_id or self.reward_sound_id:
             self._save_rewards_registry(registry)
 
@@ -207,7 +195,6 @@ class RedemptionHandler:
             user_login, reward_id, input_text,
         )
 
-        # Determine reward type
         if reward_id == self.reward_gif_id:
             await self._handle_gif(redemption_id, user_login, input_text)
         elif reward_id == self.reward_sound_id:
@@ -238,7 +225,6 @@ class RedemptionHandler:
             )
             return
 
-        # Enqueue
         item = {
             "type": "gif",
             "url": validated_url,
@@ -279,7 +265,6 @@ class RedemptionHandler:
             )
             return
 
-        # Build the src path for the overlay (relative to /sounds mount)
         sound_name = resolved_path.stem.lower()
         src = f"/sounds/{resolved_path.name}"
 
@@ -301,52 +286,59 @@ class RedemptionHandler:
                 "⏳ Queue is full, please try again later!",
             )
 
-    async def _fulfill_redemption(self, redemption_id: str, reward_id: str) -> None:
-        """Mark a redemption as fulfilled."""
-        from twitchAPI.type import CustomRewardRedemptionStatus, TwitchAPIException
-
-        # Skip API call if reward is not owned by this app
+    async def _fulfill_redemption(
+        self, redemption_id: str, reward_id: str
+    ) -> None:
+        """Mark a redemption as fulfilled — uses broadcaster client (self.twitch_client)."""
         if reward_id == self.reward_gif_id and not self._gif_reward_owned:
-            logger.debug("Skipping fulfill for manual GIF reward (redemption %s)", redemption_id)
             return
         if reward_id == self.reward_sound_id and not self._sound_reward_owned:
-            logger.debug("Skipping fulfill for manual audio reward (redemption %s)", redemption_id)
             return
 
+        logger.debug("Fulfill redemption %s — using twitch_client (broadcaster)", redemption_id)
         try:
-            await self.broadcaster_client.update_redemption_status(
+            await self.twitch_client.update_redemption_status(
                 broadcaster_id=self.target_channel_id,
                 reward_id=reward_id,
                 redemption_ids=redemption_id,
                 status=CustomRewardRedemptionStatus.FULFILLED,
             )
         except TwitchAPIException as e:
-            # Reward created manually in dashboard — can't fulfill via API.
-            # Media is already enqueued, so this is non-fatal.
-            logger.warning("Could not fulfill redemption %s (reward not created via API): %s", redemption_id, e)
+            error_msg = str(e)
+            if "different broadcaster" in error_msg or "channel points are not available" in error_msg:
+                logger.error(
+                    "Fulfill failed for %s: reward was likely created by a different account/app.\n"
+                    "Fix: delete the rewards from Twitch dashboard, delete .visema_rewards.json, restart.",
+                    redemption_id,
+                )
+            else:
+                logger.warning("Could not fulfill redemption %s: %s", redemption_id, e)
         except Exception:
             logger.exception("Failed to fulfill redemption %s", redemption_id)
 
-    async def _notify_chat(self, message: str) -> None:
-        """Send a notification message to chat via the bot account."""
+    async def _chat_message(self, message: str) -> None:
+        """Send a message to chat."""
+        client = self.chat_client or self.twitch_client
         try:
-            await self.bot_client.send_chat_message(self.target_channel_id, self.bot_user_id, message)
+            await client.send_chat_message(
+                self.target_channel_id, self.bot_user_id, message
+            )
         except Exception:
-            logger.warning("Failed to send chat notification")
+            logger.warning("Failed to send chat message")
 
-    async def _cancel_redemption(self, redemption_id: str, reward_id: str, user_login: str, reason: str) -> None:
+    async def _cancel_redemption(
+        self, redemption_id: str, reward_id: str, user_login: str, reason: str
+    ) -> None:
         """Cancel a redemption (refunds points) and post reason in chat."""
-        from twitchAPI.type import CustomRewardRedemptionStatus, TwitchAPIException
-
-        # Check if reward is owned by this app
         is_owned = (
             (reward_id == self.reward_gif_id and self._gif_reward_owned)
             or (reward_id == self.reward_sound_id and self._sound_reward_owned)
         )
 
         if is_owned:
+            logger.debug("Cancel redemption %s — using twitch_client (broadcaster)", redemption_id)
             try:
-                await self.broadcaster_client.update_redemption_status(
+                await self.twitch_client.update_redemption_status(
                     broadcaster_id=self.target_channel_id,
                     reward_id=reward_id,
                     redemption_ids=redemption_id,
@@ -354,43 +346,43 @@ class RedemptionHandler:
                 )
                 logger.info("Canceled redemption for %s: %s", user_login, reason)
             except TwitchAPIException as e:
-                logger.warning("Could not cancel redemption %s (reward not created via API): %s", redemption_id, e)
+                error_msg = str(e)
+                if "different broadcaster" in error_msg or "channel points are not available" in error_msg:
+                    logger.error(
+                        "Cancel failed for %s: reward was likely created by a different account/app.\n"
+                        "Fix: delete the rewards from Twitch dashboard, delete .visema_rewards.json, restart.",
+                        redemption_id,
+                    )
+                else:
+                    logger.warning("Could not cancel redemption %s: %s", redemption_id, e)
             except Exception:
                 logger.exception("Failed to cancel redemption %s", redemption_id)
         else:
             logger.warning(
-                "Cannot cancel redemption for %s (reward not created by this app) — points will NOT be refunded. "
-                "Reason: %s", user_login, reason
+                "Cannot cancel redemption for %s (reward not created by this app). Reason: %s",
+                user_login, reason,
             )
 
         await self._chat_message(reason)
 
-    async def _chat_message(self, message: str) -> None:
-        """Send a message to chat via the bot account."""
-        try:
-            await self.bot_client.send_chat_message(self.target_channel_id, self.bot_user_id, message)
-        except Exception:
-            logger.warning("Failed to send chat message")
-
 
 async def start_eventsub(
-    broadcaster_client: Twitch,
-    bot_client: Twitch,
+    twitch_service,
     queue: MediaQueue,
     settings,
     channel_id: str,
     bot_user_id: str,
+    chat_client=None,
 ) -> asyncio.Task:
     """Start the EventSub WebSocket listener.
 
-    Mirrors twitch-tts-git pattern with re-auth on 401 errors.
+    Uses the same TwitchService for EventSub + chat (single account).
     Returns the asyncio Task running the listener.
     """
     from twitchAPI.eventsub.websocket import EventSubWebsocket
 
     handler = RedemptionHandler(
-        broadcaster_client=broadcaster_client,
-        bot_client=bot_client,
+        twitch_client=twitch_service.twitch,
         queue=queue,
         target_channel_id=channel_id,
         bot_user_id=bot_user_id,
@@ -399,18 +391,12 @@ async def start_eventsub(
         gif_settings=settings.gif,
         audio_settings=settings.audio,
         command_settings=settings.commands,
+        chat_client=chat_client,
         reward_gif_cost=settings.twitch.reward_gif_cost,
         reward_sound_cost=settings.twitch.reward_sound_cost,
     )
 
-    # Resolve reward IDs
-    await handler.resolve_reward_ids()
-
-    # Create rewards via API if they don't exist yet
-    await handler.ensure_rewards_exist()
-
     async def _subscribe(eventsub):
-        """Create EventSub subscription."""
         await eventsub.listen_channel_points_custom_reward_redemption_add(
             broadcaster_user_id=channel_id,
             callback=handler.on_redemption,
@@ -420,16 +406,15 @@ async def start_eventsub(
         max_retries = 5
         for attempt in range(max_retries):
             try:
-                # Create fresh EventSub with current auth state
-                eventsub = EventSubWebsocket(broadcaster_client)
-                handler._eventsub = eventsub
+                await handler.resolve_reward_ids()
+                await handler.ensure_rewards_exist()
 
+                eventsub = EventSubWebsocket(twitch_service.twitch)
                 logger.info("Starting EventSub listener for channel %s", channel_id)
                 eventsub.start()
                 await _subscribe(eventsub)
                 logger.info("✓ Listening for channel point redemptions via EventSub")
 
-                # Wait for connection to close (graceful shutdown or crash)
                 try:
                     while eventsub._running:
                         await asyncio.sleep(1)
@@ -439,27 +424,22 @@ async def start_eventsub(
                     logger.exception("EventSub WebSocket crashed")
             except Exception as e:
                 error_str = str(e)
-                # Re-auth on 401 / auth errors (twitch-tts-git pattern)
                 if any(k in error_str for k in ("401", "Unauthorized", "needs user authentication")):
-                    logger.warning("Auth error during EventSub — will retry with re-auth")
-                    # The broadcaster_client should auto-refresh via the callback
+                    logger.warning("Auth error during EventSub — re-authenticating...")
+                    await twitch_service.reauthenticate_if_needed()
                     await asyncio.sleep(2 ** attempt)
                     continue
                 elif "already subscribed" in error_str.lower():
-                    # Subscription already exists, connection is fine
                     try:
                         while eventsub._running:
                             await asyncio.sleep(1)
                     except asyncio.CancelledError:
                         break
-                    except Exception:
-                        pass
                 else:
                     logger.error("EventSub error: %s", e)
                     await asyncio.sleep(2 ** min(attempt, 4))
                     continue
 
-            # If we get here without CancelledError, the connection dropped
             wait_time = 2 ** min(attempt, 4)
             logger.info("EventSub disconnected, retrying in %ds...", wait_time)
             await asyncio.sleep(wait_time)

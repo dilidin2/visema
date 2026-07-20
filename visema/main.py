@@ -2,13 +2,22 @@
 Visema — Twitch Channel Points GIF/Sound overlay bot.
 
 Entrypoint: wires everything together and starts the event loop.
+
+Modes:
+  Single account (default): uv run visema
+    → broadcaster handles EventSub, chat, and API calls
+    → tokens saved to token_broadcaster.json
+
+  Dual account (--bot flag): uv run visema --bot
+    → requires broadcaster already authenticated (token_broadcaster.json exists)
+    → broadcaster: EventSub + redemption management
+    → bot: chat messages only (token_bot.json)
 """
 
 import argparse
 import asyncio
 import logging
 import sys
-import threading
 
 import uvicorn
 from twitchAPI.twitch import Twitch
@@ -23,6 +32,9 @@ from visema.utils.config import load_settings
 
 logger = logging.getLogger("visema")
 
+BROADCASTER_TOKEN_PATH = "token_broadcaster.json"
+BOT_TOKEN_PATH = "token_bot.json"
+
 
 def setup_logging(verbose: bool = False) -> None:
     """Configure logging for the application."""
@@ -34,55 +46,64 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-def start_server(settings, stop_event: threading.Event) -> threading.Thread:
-    """Start the FastAPI server in a background thread."""
+async def start_server(settings) -> asyncio.Task:
+    """Start the FastAPI/uvicorn server as a task in the current event loop."""
+    config = uvicorn.Config(
+        server_app.create_app(),
+        host="127.0.0.1",
+        port=settings.overlay.port,
+        log_level="info",
+        access_log=False,
+    )
+    server = uvicorn.Server(config)
+    task = asyncio.create_task(server.serve(), name="uvicorn-server")
 
-    def _run():
-        server = uvicorn.Server(
-            uvicorn.Config(
-                server_app.create_app(),
-                host="127.0.0.1",
-                port=settings.overlay.port,
-                log_level="info",
-                access_log=False,
-            )
-        )
-        server.run()
-
-    thread = threading.Thread(target=_run, name="uvicorn-server", daemon=True)
-    thread.start()
-
-    # Wait for server to be ready
-    import time
-    for _ in range(30):
-        if thread.is_alive():
-            # Give it a moment to bind
-            time.sleep(0.2)
-            # We check by trying to import; if uvicorn started without error, it's running
+    for _ in range(50):
+        if server.started:
             break
-        time.sleep(0.1)
+        await asyncio.sleep(0.1)
+    else:
+        logger.warning("Uvicorn may not have started in time — continuing anyway")
 
     logger.info("Overlay server running at http://127.0.0.1:%d", settings.overlay.port)
     logger.info("Overlay page: http://127.0.0.1:%d/overlay", settings.overlay.port)
-    logger.info("WebSocket endpoint: ws://127.0.0.1:%d/ws", settings.overlay.port)
+    logger.info("WebSocket endpoint: ws://localhost:%d/ws", settings.overlay.port)
     logger.info("")
     logger.info("── OBS SETUP ─────────────────────────────────────────────────")
     logger.info("Add a Browser Source in OBS with URL: http://127.0.0.1:%d/overlay", settings.overlay.port)
     logger.info("Set width/height to your canvas (e.g. 1920x1080), enable 'Allow transparency'")
     logger.info("─────────────────────────────────────────────────────────────")
 
-    return thread
+    return task
 
 
-async def get_channel_id(client: Twitch, channel_name: str) -> str:
-    """Resolve a channel name to its Twitch user ID via the authenticated client."""
-    async for user in client.get_users(logins=[channel_name]):
-        return user.id
+async def _ensure_auth(
+    twitch_service: auth_module.TwitchService, account_label: str
+) -> None:
+    """Ensure a TwitchService is authenticated — run DCF if tokens are missing."""
+    if twitch_service.token_path.exists():
+        logger.info("✓ %s connected automatically (saved tokens loaded)", account_label)
+    else:
+        logger.warning(
+            "⚠️  No %s found — starting Device Code Flow for %s",
+            twitch_service.token_path,
+            account_label,
+        )
+        await twitch_service._do_device_auth()
 
-    raise ValueError(f"Could not resolve channel ID for '{channel_name}'")
+
+async def _get_user_info(client: Twitch) -> tuple[str, str]:
+    """Resolve username and user ID from the authenticated client.
+
+    Returns (login_name, user_id).
+    """
+    async for user in client.get_users():
+        return user.login, user.id
+
+    raise ValueError("Could not resolve user info from get_users()")
 
 
-async def run() -> None:
+async def run(use_bot: bool = False) -> None:
     """Main async entrypoint."""
     settings = load_settings()
     logger.info("Visema starting up...")
@@ -93,9 +114,8 @@ async def run() -> None:
         settings.audio.allowed_extensions,
     )
 
-    # ── Start overlay server ────────────────────────────
-    stop_event = threading.Event()
-    server_thread = start_server(settings, stop_event)
+    # ── Start overlay server (same event loop as queue worker) ─
+    server_task = await start_server(settings)
 
     # ── Setup media queue ───────────────────────────────
     max_queue = max(settings.gif.max_queue_size, settings.audio.max_queue_size)
@@ -107,46 +127,89 @@ async def run() -> None:
     )
     await media_queue.start()
 
-    # ── Authenticate Twitch accounts ────────────────────
-    broadcaster_client, bot_client = await auth_module.setup_auth(
+    # ── Determine mode ──────────────────────────────────
+    if use_bot:
+        logger.info("Dual-account mode (--bot): broadcaster + bot")
+
+        from pathlib import Path
+        if not Path(BROADCASTER_TOKEN_PATH).exists():
+            logger.error(
+                "Broadcaster token not found (%s).\n"
+                "Run `uv run visema` first to authenticate the broadcaster account.",
+                BROADCASTER_TOKEN_PATH,
+            )
+            sys.exit(1)
+    else:
+        logger.info("Single-account mode (default)")
+
+    # ── Connect broadcaster account ─────────────────────
+    broadcaster_service = auth_module.TwitchService(
         client_id=settings.twitch_client_id,
-        client_secret=settings.twitch_client_secret,
-        broadcaster_name=settings.twitch.target_channel,
-        bot_name=settings.twitch.bot_channel,
+        token_path=BROADCASTER_TOKEN_PATH,
     )
 
-    # ── Resolve channel IDs ─────────────────────────────
-    if settings.twitch.target_channel_id:
-        channel_id = settings.twitch.target_channel_id
-    else:
+    try:
+        await broadcaster_service.connect()
+    except Exception as e:
+        logger.error("Failed to initialize broadcaster Twitch client: %s", e)
+        sys.exit(1)
+
+    # Auth DCF only in single-account mode (dual mode requires pre-existing token)
+    if not use_bot:
+        await _ensure_auth(broadcaster_service, "broadcaster")
+
+    # Resolve broadcaster info from API
+    try:
+        broadcaster_name, broadcaster_id = await _get_user_info(
+            broadcaster_service.twitch
+        )
+    except Exception:
+        logger.error("Failed to resolve broadcaster info")
+        sys.exit(1)
+
+    logger.info("Broadcaster: %s (ID: %s)", broadcaster_name, broadcaster_id)
+
+    # ── Setup bot account or reuse broadcaster ──────────
+    if use_bot:
+        bot_service = auth_module.TwitchService(
+            client_id=settings.twitch_client_id,
+            token_path=BOT_TOKEN_PATH,
+        )
         try:
-            channel_id = await get_channel_id(broadcaster_client, settings.twitch.target_channel)
-        except Exception:
-            logger.error("Failed to resolve channel ID for '%s'", settings.twitch.target_channel)
+            await bot_service.connect()
+        except Exception as e:
+            logger.error("Failed to initialize bot Twitch client: %s", e)
             sys.exit(1)
 
-    # Resolve bot user ID from the authenticated client (guaranteed to match the OAuth token)
-    async for user in bot_client.get_users():
-        bot_user_id = user.id
-        break
+        await _ensure_auth(bot_service, "bot")
 
-    logger.info("Target channel: %s (ID: %s)", settings.twitch.target_channel, channel_id)
+        try:
+            _, bot_user_id = await _get_user_info(bot_service.twitch)
+        except Exception:
+            logger.error("Failed to resolve bot user info")
+            sys.exit(1)
+
+        chat_client = bot_service.twitch
+        logger.info("Bot account: user_id=%s", bot_user_id)
+    else:
+        bot_user_id = broadcaster_id
+        chat_client = broadcaster_service.twitch
 
     # ── Start EventSub listener ─────────────────────────
     eventsub_task = await eventsub_module.start_eventsub(
-        broadcaster_client=broadcaster_client,
-        bot_client=bot_client,
+        twitch_service=broadcaster_service,
         queue=media_queue,
         settings=settings,
-        channel_id=channel_id,
+        channel_id=broadcaster_id,
         bot_user_id=bot_user_id,
+        chat_client=chat_client if use_bot else None,
     )
 
     # ── Start chat listener ─────────────────────────────
     chat_task = await chat_module.start_chat_listener(
-        bot_client=bot_client,
-        target_channel_name=settings.twitch.target_channel,
-        target_channel_id=channel_id,
+        twitch_client=chat_client,
+        target_channel_name=broadcaster_name,
+        target_channel_id=broadcaster_id,
         bot_user_id=bot_user_id,
         command_settings=settings.commands,
     )
@@ -154,33 +217,43 @@ async def run() -> None:
     logger.info("Visema is running! Press Ctrl+C to stop.")
 
     # ── Run until interrupted ───────────────────────────
+    disconnectables = [broadcaster_service]
+    if use_bot:
+        disconnectables.append(bot_service)
+
     try:
-        # Wait for either task to finish (shouldn't happen normally)
         done, pending = await asyncio.wait(
-            [eventsub_task, chat_task],
+            [eventsub_task, chat_task, server_task],
             return_when=asyncio.FIRST_COMPLETED,
         )
     except asyncio.CancelledError:
         pass
     finally:
         logger.info("Shutting down...")
-        for task in [eventsub_task, chat_task]:
+        for task in [eventsub_task, chat_task, server_task]:
             task.cancel()
+        for svc in disconnectables:
+            await svc.disconnect()
         await media_queue.stop()
-        stop_event.set()
         logger.info("Visema stopped.")
 
 
 def main():
     """CLI entrypoint."""
-    parser = argparse.ArgumentParser(description="Visema — Twitch Channel Points overlay bot")
-    parser.add_argument("--setup", action="store_true", help="Run OAuth setup and exit")
+    parser = argparse.ArgumentParser(
+        description="Visema — Twitch Channel Points overlay bot"
+    )
     parser.add_argument("--verbose", "-v", action="store_true", help="Enable debug logging")
+    parser.add_argument(
+        "--bot",
+        action="store_true",
+        help="Use separate bot account for chat messages",
+    )
     args = parser.parse_args()
 
     setup_logging(args.verbose)
 
-    asyncio.run(run())
+    asyncio.run(run(use_bot=args.bot))
 
 
 if __name__ == "__main__":

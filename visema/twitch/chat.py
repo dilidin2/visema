@@ -1,7 +1,7 @@
 """
 Chat command listener for !gif, !sound, and !soundlist.
 
-Uses the bot account to listen on the broadcaster's channel via IRC.
+Uses the same Twitch client for chat (single-account design).
 All commands are read-only — they do not trigger overlay or queue actions.
 """
 
@@ -21,24 +21,25 @@ class ChatCommandHandler:
 
     def __init__(
         self,
-        bot_client: Twitch,
+        twitch_client: Twitch,
         target_channel_name: str,
         target_channel_id: str,
         bot_user_id: str,
         command_settings,
     ):
-        self.bot_client = bot_client
+        self.twitch_client = twitch_client
         self.target_channel_name = target_channel_name
         self.target_channel_id = target_channel_id
         self.bot_user_id = bot_user_id
         self.commands = command_settings
-        self._running = False
 
     async def _respond(self, sender: str, response: str) -> None:
         """Send a response to chat, pinging the sender."""
         message = f"@{sender}: {response.strip()}"
         try:
-            await self.bot_client.send_chat_message(self.target_channel_id, self.bot_user_id, message)
+            await self.twitch_client.send_chat_message(
+                self.target_channel_id, self.bot_user_id, message
+            )
         except Exception:
             logger.warning("Failed to send chat response")
 
@@ -62,13 +63,12 @@ class ChatCommandHandler:
             await self._respond(cmd.user.name, self.commands.soundlist_response)
             return
 
-        # Auto-generate from sounds index
         sound_list = ", ".join(names)
         await self._respond(cmd.user.name, f"🔊 Available sounds: {sound_list}")
 
 
 async def start_chat_listener(
-    bot_client: Twitch,
+    twitch_client: Twitch,
     target_channel_name: str,
     target_channel_id: str,
     bot_user_id: str,
@@ -76,13 +76,11 @@ async def start_chat_listener(
 ) -> asyncio.Task:
     """Start the chat command listener.
 
-    target_channel_name is used for IRC JOIN (channel name).
-    target_channel_id is used for API calls (numeric ID).
-
+    Uses the same Twitch client for chat (single-account design).
     Returns the asyncio Task running the listener.
     """
     handler = ChatCommandHandler(
-        bot_client=bot_client,
+        twitch_client=twitch_client,
         target_channel_name=target_channel_name,
         target_channel_id=target_channel_id,
         bot_user_id=bot_user_id,
@@ -90,7 +88,7 @@ async def start_chat_listener(
     )
 
     async def _run_chat():
-        chat = Chat(bot_client)
+        chat = Chat(twitch_client)
         await chat
         chat.register_command("gif", handler.on_gif)
         chat.register_command("sound", handler.on_sound)
@@ -98,7 +96,6 @@ async def start_chat_listener(
         try:
             chat.start()
             await chat.join_room(target_channel_name)
-            # Keep running until cancelled
             while chat.is_connected:
                 await asyncio.sleep(1)
         except asyncio.CancelledError:

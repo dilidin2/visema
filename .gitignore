@@ -1,5 +1,7 @@
 config.yaml
 .env
 sounds/
+__pycache__/
+token*.json
 visema.egg-info/
 .visema_rewards.json

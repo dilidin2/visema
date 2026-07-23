@@ -3,719 +3,816 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Visema — Twitch Channel Points Bot</title>
-<meta name="description" content="Let viewers spend Channel Points to show GIFs and play audio clips on your stream via OBS.">
+<title>Visema — Let Your Viewers Control the Stream</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800;900&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet">
 <style>
-/* ── Reset & Base ─────────────────────────────────────────── */
-*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
 
-:root {
-  --bg: #0a0a0f;
-  --bg-elevated: #111119;
-  --bg-card: #15151f;
-  --border: #22222e;
-  --border-hover: #33334a;
-  --text: #e8e8f0;
-  --text-dim: #8888a0;
-  --text-muted: #555568;
-  --cyan: #22d3ee;
-  --cyan-dim: #0e7490;
-  --amber: #f59e0b;
-  --amber-dim: #92400e;
-  --pink: #e879f9;
-  --green: #4ade80;
-  --radius: 12px;
-  --radius-lg: 20px;
-}
+  :root {
+    --void: #0a0318;
+    --deep: #120627;
+    --surface: #1c0e35;
+    --violet: #7c3aed;
+    --violet-light: #a78bfa;
+    --magenta: #e879f9;
+    --amber: #fbbf24;
+    --text: #ede9fe;
+    --text-dim: #a5a0c0;
+    --radius: 16px;
+  }
 
-html { scroll-behavior: smooth; }
+  html { scroll-behavior: smooth; }
 
-body {
-  font-family: 'Outfit', sans-serif;
-  background: var(--bg);
-  color: var(--text);
-  line-height: 1.6;
-  overflow-x: hidden;
-  -webkit-font-smoothing: antialiased;
-}
+  body {
+    font-family: 'Inter', -apple-system, sans-serif;
+    background: var(--void);
+    color: var(--text);
+    overflow-x: hidden;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
 
-/* ── Noise Overlay ────────────────────────────────────────── */
-body::before {
-  content: '';
-  position: fixed;
-  inset: 0;
-  z-index: 9999;
-  pointer-events: none;
-  opacity: 0.03;
-  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
-  background-size: 256px 256px;
-}
+  /* ─── Animated Background System ─── */
+  .bg-canvas {
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    overflow: hidden;
+  }
 
-/* ── Ambient Orbs ─────────────────────────────────────────── */
-.orb {
-  position: fixed;
-  border-radius: 50%;
-  filter: blur(120px);
-  opacity: 0.15;
-  pointer-events: none;
-  z-index: 0;
-}
-.orb-cyan {
-  width: 600px; height: 600px;
-  background: radial-gradient(circle, var(--cyan), transparent 70%);
-  top: -200px; left: -100px;
-  animation: orbFloat1 20s ease-in-out infinite;
-}
-.orb-amber {
-  width: 500px; height: 500px;
-  background: radial-gradient(circle, var(--amber), transparent 70%);
-  bottom: -150px; right: -100px;
-  animation: orbFloat2 25s ease-in-out infinite;
-}
-.orb-pink {
-  width: 400px; height: 400px;
-  background: radial-gradient(circle, var(--pink), transparent 70%);
-  top: 50%; left: 50%;
-  transform: translate(-50%, -50%);
-  animation: orbFloat3 30s ease-in-out infinite;
-}
+  /* Deep radial washes */
+  .bg-canvas::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 10%, rgba(124,58,237,.18) 0%, transparent 70%),
+      radial-gradient(ellipse 60% 80% at 80% 80%, rgba(232,121,249,.12) 0%, transparent 60%),
+      radial-gradient(ellipse 50% 50% at 50% 50%, rgba(124,58,237,.06) 0%, transparent 80%);
+    animation: breathe 12s ease-in-out infinite alternate;
+  }
 
-@keyframes orbFloat1 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(80px, 60px) scale(1.1); }
-  66% { transform: translate(-40px, 100px) scale(0.9); }
-}
-@keyframes orbFloat2 {
-  0%, 100% { transform: translate(0, 0) scale(1); }
-  33% { transform: translate(-60px, -80px) scale(1.15); }
-  66% { transform: translate(50px, -40px) scale(0.85); }
-}
-@keyframes orbFloat3 {
-  0%, 100% { transform: translate(-50%, -50%) scale(1); }
-  50% { transform: translate(-50%, -50%) scale(1.3); }
-}
+  @keyframes breathe {
+    0%   { opacity: .8; transform: scale(1); }
+    100% { opacity: 1;  transform: scale(1.05); }
+  }
 
-/* ── Layout ───────────────────────────────────────────────── */
-.container {
-  max-width: 1100px;
-  margin: 0 auto;
-  padding: 0 24px;
-  position: relative;
-  z-index: 1;
-}
+  /* Grid overlay */
+  .bg-grid {
+    position: absolute;
+    inset: 0;
+    background-image:
+      linear-gradient(rgba(124,58,237,.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(124,58,237,.04) 1px, transparent 1px);
+    background-size: 60px 60px;
+    mask-image: radial-gradient(ellipse 70% 70% at 50% 30%, black 20%, transparent 70%);
+  }
 
-/* ── Navigation ───────────────────────────────────────────── */
-nav {
-  position: fixed;
-  top: 0; left: 0; right: 0;
-  z-index: 100;
-  padding: 16px 24px;
-  background: rgba(10, 10, 15, 0.7);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
-  border-bottom: 1px solid var(--border);
-}
-nav .container {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-nav .logo {
-  font-weight: 800;
-  font-size: 1.25rem;
-  letter-spacing: -0.02em;
-  color: var(--text);
-  text-decoration: none;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-nav .logo .dot {
-  display: inline-block;
-  width: 8px; height: 8px;
-  background: var(--cyan);
-  border-radius: 50%;
-  box-shadow: 0 0 12px var(--cyan);
-  animation: pulse 2s ease-in-out infinite;
-}
-@keyframes pulse {
-  0%, 100% { opacity: 1; transform: scale(1); }
-  50% { opacity: 0.5; transform: scale(0.8); }
-}
-nav .nav-links {
-  display: flex;
-  gap: 24px;
-  list-style: none;
-}
-nav .nav-links a {
-  color: var(--text-dim);
-  text-decoration: none;
-  font-size: 0.875rem;
-  font-weight: 500;
-  transition: color 0.2s;
-}
-nav .nav-links a:hover { color: var(--text); }
+  /* Floating orbs */
+  .orb {
+    position: absolute;
+    border-radius: 50%;
+    filter: blur(1px);
+    opacity: 0;
+    animation: float-orb linear infinite;
+  }
 
-/* ── Hero ─────────────────────────────────────────────────── */
-.hero {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  text-align: center;
-  padding: 120px 24px 80px;
-  position: relative;
-}
-.hero-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px 6px 8px;
-  border-radius: 100px;
-  border: 1px solid var(--border);
-  background: var(--bg-elevated);
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  margin-bottom: 32px;
-  animation: fadeUp 0.8s ease-out both;
-}
-.hero-badge .badge-dot {
-  width: 6px; height: 6px;
-  background: var(--green);
-  border-radius: 50%;
-  box-shadow: 0 0 8px var(--green);
-}
-.hero h1 {
-  font-size: clamp(3rem, 8vw, 6rem);
-  font-weight: 900;
-  letter-spacing: -0.04em;
-  line-height: 1.05;
-  margin-bottom: 24px;
-  animation: fadeUp 0.8s ease-out 0.15s both;
-}
-.hero h1 .gradient {
-  background: linear-gradient(135deg, var(--cyan) 0%, var(--pink) 50%, var(--amber) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-}
-.hero p {
-  font-size: clamp(1.05rem, 2vw, 1.3rem);
-  color: var(--text-dim);
-  max-width: 580px;
-  margin: 0 auto 40px;
-  font-weight: 300;
-  animation: fadeUp 0.8s ease-out 0.3s both;
-}
-.hero-actions {
-  display: flex;
-  gap: 16px;
-  justify-content: center;
-  flex-wrap: wrap;
-  animation: fadeUp 0.8s ease-out 0.45s both;
-}
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 14px 28px;
-  border-radius: 100px;
-  font-family: inherit;
-  font-size: 0.95rem;
-  font-weight: 600;
-  text-decoration: none;
-  cursor: pointer;
-  border: none;
-  transition: all 0.25s ease;
-}
-.btn-primary {
-  background: var(--cyan);
-  color: var(--bg);
-  box-shadow: 0 0 30px rgba(34, 211, 238, 0.2);
-}
-.btn-primary:hover {
-  box-shadow: 0 0 50px rgba(34, 211, 238, 0.35);
-  transform: translateY(-2px);
-}
-.btn-secondary {
-  background: var(--bg-elevated);
-  color: var(--text);
-  border: 1px solid var(--border);
-}
-.btn-secondary:hover {
-  border-color: var(--border-hover);
-  background: var(--bg-card);
-}
+  @keyframes float-orb {
+    0%   { transform: translateY(0) rotate(0deg); opacity: 0; }
+    10%  { opacity: 1; }
+    90%  { opacity: 1; }
+    100% { transform: translateY(-110vh) rotate(360deg); opacity: 0; }
+  }
 
-@keyframes fadeUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to { opacity: 1; transform: translateY(0); }
-}
+  /* Signal rings (broadcast motif) */
+  .signal-rings {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+  }
 
-/* ── Section ──────────────────────────────────────────────── */
-section {
-  padding: 100px 0;
-}
-.section-label {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  font-weight: 500;
-  text-transform: uppercase;
-  letter-spacing: 0.15em;
-  color: var(--cyan);
-  margin-bottom: 12px;
-}
-.section-title {
-  font-size: clamp(2rem, 4vw, 3rem);
-  font-weight: 800;
-  letter-spacing: -0.03em;
-  line-height: 1.15;
-  margin-bottom: 16px;
-}
-.section-desc {
-  color: var(--text-dim);
-  font-size: 1.1rem;
-  max-width: 560px;
-  font-weight: 300;
-}
+  .ring {
+    position: absolute;
+    border: 1px solid rgba(124,58,237,.08);
+    border-radius: 50%;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    animation: ring-pulse 6s ease-out infinite;
+  }
 
-/* ── Features Grid ────────────────────────────────────────── */
-.features-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-  gap: 20px;
-  margin-top: 48px;
-}
-.feature-card {
-  background: var(--bg-card);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  padding: 32px;
-  transition: all 0.35s ease;
-  position: relative;
-  overflow: hidden;
-}
-.feature-card::before {
-  content: '';
-  position: absolute;
-  inset: 0;
-  border-radius: var(--radius-lg);
-  background: linear-gradient(135deg, rgba(34, 211, 238, 0.05), transparent 60%);
-  opacity: 0;
-  transition: opacity 0.35s ease;
-}
-.feature-card:hover {
-  border-color: var(--border-hover);
-  transform: translateY(-4px);
-}
-.feature-card:hover::before { opacity: 1; }
-.feature-icon {
-  width: 48px; height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 1.4rem;
-  margin-bottom: 20px;
-  position: relative;
-  z-index: 1;
-}
-.feature-icon.cyan { background: rgba(34, 211, 238, 0.1); color: var(--cyan); }
-.feature-icon.amber { background: rgba(245, 158, 11, 0.1); color: var(--amber); }
-.feature-icon.pink { background: rgba(232, 121, 249, 0.1); color: var(--pink); }
-.feature-icon.green { background: rgba(74, 222, 128, 0.1); color: var(--green); }
-.feature-card h3 {
-  font-size: 1.15rem;
-  font-weight: 700;
-  margin-bottom: 8px;
-  position: relative;
-  z-index: 1;
-}
-.feature-card p {
-  color: var(--text-dim);
-  font-size: 0.925rem;
-  font-weight: 300;
-  position: relative;
-  z-index: 1;
-}
+  .ring:nth-child(1) { width: 200px; height: 200px; animation-delay: 0s; }
+  .ring:nth-child(2) { width: 350px; height: 350px; animation-delay: 1s; }
+  .ring:nth-child(3) { width: 500px; height: 500px; animation-delay: 2s; }
+  .ring:nth-child(4) { width: 650px; height: 650px; animation-delay: 3s; }
+  .ring:nth-child(5) { width: 800px; height: 800px; animation-delay: 4s; }
 
-/* ── How It Works ─────────────────────────────────────────── */
-.how-it-works {
-  margin-top: 48px;
-}
-.flow-steps {
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  margin-top: 48px;
-  position: relative;
-}
-.flow-step {
-  display: grid;
-  grid-template-columns: 56px 1fr;
-  gap: 20px;
-  padding: 24px 0;
-  position: relative;
-}
-.flow-step::before {
-  content: '';
-  position: absolute;
-  left: 27px;
-  top: 56px;
-  bottom: 0;
-  width: 2px;
-  background: var(--border);
-}
-.flow-step:last-child::before { display: none; }
-.flow-num {
-  width: 56px; height: 56px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1.1rem;
-  background: var(--bg-card);
-  border: 2px solid var(--border);
-  color: var(--text);
-  position: relative;
-  z-index: 1;
-}
-.flow-step:nth-child(1) .flow-num { border-color: var(--cyan-dim); color: var(--cyan); }
-.flow-step:nth-child(2) .flow-num { border-color: var(--amber-dim); color: var(--amber); }
-.flow-step:nth-child(3) .flow-num { border-color: var(--pink); color: var(--pink); }
-.flow-step:nth-child(4) .flow-num { border-color: var(--green); color: var(--green); }
-.flow-content h3 {
-  font-size: 1.1rem;
-  font-weight: 700;
-  margin-bottom: 4px;
-}
-.flow-content p {
-  color: var(--text-dim);
-  font-weight: 300;
-  font-size: 0.95rem;
-}
+  @keyframes ring-pulse {
+    0%   { opacity: .6; transform: translate(-50%, -50%) scale(.9); }
+    100% { opacity: 0;  transform: translate(-50%, -50%) scale(1.3); }
+  }
 
-/* ── Code Block ───────────────────────────────────────────── */
-.code-section {
-  margin-top: 48px;
-}
-.code-block {
-  background: var(--bg-elevated);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
-  overflow: hidden;
-  margin-top: 32px;
-}
-.code-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 20px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-card);
-}
-.code-header .dots {
-  display: flex;
-  gap: 8px;
-}
-.code-header .dot {
-  width: 12px; height: 12px;
-  border-radius: 50%;
-  background: var(--border);
-}
-.code-header .dot:nth-child(1) { background: #ff5f57; }
-.code-header .dot:nth-child(2) { background: #febc2e; }
-.code-header .dot:nth-child(3) { background: #28c840; }
-.code-header .filename {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.75rem;
-  color: var(--text-muted);
-}
-.code-body {
-  padding: 24px;
-  overflow-x: auto;
-}
-.code-body pre {
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.85rem;
-  line-height: 1.7;
-  color: var(--text-dim);
-}
-.code-body .kw { color: var(--pink); }
-.code-body .str { color: var(--green); }
-.code-body .cm { color: var(--text-muted); font-style: italic; }
-.code-body .fn { color: var(--cyan); }
-.code-body .num { color: var(--amber); }
+  /* Diamond shapes */
+  .diamond {
+    position: absolute;
+    width: 12px; height: 12px;
+    border: 1px solid rgba(167,139,250,.15);
+    transform: rotate(45deg);
+    animation: diamond-drift 20s linear infinite;
+  }
 
-/* ── Tech Stack ───────────────────────────────────────────── */
-.tech-grid {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 12px;
-  margin-top: 32px;
-}
-.tech-tag {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 16px;
-  border-radius: 100px;
-  border: 1px solid var(--border);
-  background: var(--bg-card);
-  font-family: 'IBM Plex Mono', monospace;
-  font-size: 0.8rem;
-  color: var(--text-dim);
-  transition: all 0.25s ease;
-}
-.tech-tag:hover {
-  border-color: var(--border-hover);
-  color: var(--text);
-}
-.tech-tag .tech-dot {
-  width: 6px; height: 6px;
-  border-radius: 50%;
-}
+  @keyframes diamond-drift {
+    0%   { transform: rotate(45deg) scale(.8); opacity: .3; }
+    50%  { transform: rotate(225deg) scale(1.2); opacity: .6; }
+    100% { transform: rotate(405deg) scale(.8); opacity: .3; }
+  }
 
-/* ── Footer ───────────────────────────────────────────────── */
-footer {
-  padding: 48px 0;
-  border-top: 1px solid var(--border);
-  text-align: center;
-}
-footer p {
-  color: var(--text-muted);
-  font-size: 0.85rem;
-}
-footer a {
-  color: var(--cyan);
-  text-decoration: none;
-}
-footer a:hover { text-decoration: underline; }
+  /* ─── Content wrapper ─── */
+  .page { position: relative; z-index: 1; }
 
-/* ── Responsive ───────────────────────────────────────────── */
-@media (max-width: 768px) {
-  nav .nav-links { display: none; }
-  .features-grid { grid-template-columns: 1fr; }
-  .flow-step { grid-template-columns: 40px 1fr; gap: 14px; }
-  .flow-num { width: 40px; height: 40px; font-size: 0.9rem; }
-  .flow-step::before { left: 19px; top: 40px; }
-}
+  /* ─── Navigation ─── */
+  nav {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    z-index: 100;
+    padding: 1.25rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    backdrop-filter: blur(16px) saturate(1.4);
+    background: rgba(10,3,24,.7);
+    border-bottom: 1px solid rgba(124,58,237,.1);
+  }
+
+  .nav-logo {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
+    font-size: 1.35rem;
+    color: var(--text);
+    text-decoration: none;
+    letter-spacing: -.02em;
+  }
+
+  .nav-logo span { color: var(--violet-light); }
+
+  .nav-links { display: flex; gap: 2rem; align-items: center; }
+
+  .nav-links a {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-size: .9rem;
+    font-weight: 500;
+    transition: color .2s;
+  }
+
+  .nav-links a:hover { color: var(--text); }
+
+  .btn-nav {
+    background: var(--violet);
+    color: #fff !important;
+    padding: .5rem 1.25rem;
+    border-radius: 99px;
+    font-weight: 600;
+    transition: background .2s, transform .15s;
+  }
+
+  .btn-nav:hover { background: #6d28d9; transform: translateY(-1px); }
+
+  /* ─── Hero ─── */
+  .hero {
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 7rem 2rem 4rem;
+    position: relative;
+  }
+
+  .hero-inner {
+    max-width: 1100px;
+    width: 100%;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4rem;
+    align-items: center;
+  }
+
+  .hero-text { max-width: 520px; }
+
+  .eyebrow {
+    display: inline-flex;
+    align-items: center;
+    gap: .5rem;
+    font-size: .8rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .1em;
+    color: var(--violet-light);
+    margin-bottom: 1.25rem;
+    background: rgba(124,58,237,.1);
+    padding: .4rem 1rem;
+    border-radius: 99px;
+    border: 1px solid rgba(124,58,237,.2);
+  }
+
+  .eyebrow svg { width: 14px; height: 14px; }
+
+  h1 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(2.5rem, 5vw, 3.75rem);
+    font-weight: 700;
+    line-height: 1.08;
+    letter-spacing: -.03em;
+    margin-bottom: 1.5rem;
+  }
+
+  h1 .accent {
+    background: linear-gradient(135deg, var(--violet-light), var(--magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-desc {
+    font-size: 1.125rem;
+    color: var(--text-dim);
+    line-height: 1.7;
+    margin-bottom: 2.25rem;
+    max-width: 440px;
+  }
+
+  .hero-actions { display: flex; gap: 1rem; flex-wrap: wrap; align-items: center; }
+
+  .btn-primary {
+    display: inline-flex;
+    align-items: center;
+    gap: .6rem;
+    background: linear-gradient(135deg, var(--violet), #6d28d9);
+    color: #fff;
+    text-decoration: none;
+    font-weight: 600;
+    font-size: 1rem;
+    padding: .9rem 2rem;
+    border-radius: 99px;
+    transition: transform .2s, box-shadow .3s;
+    box-shadow: 0 4px 24px rgba(124,58,237,.3);
+  }
+
+  .btn-primary:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 8px 32px rgba(124,58,237,.45);
+  }
+
+  .btn-secondary {
+    color: var(--text-dim);
+    text-decoration: none;
+    font-weight: 500;
+    font-size: .95rem;
+    padding: .9rem 1.5rem;
+    border: 1px solid rgba(167,139,250,.2);
+    border-radius: 99px;
+    transition: border-color .2s, color .2s;
+  }
+
+  .btn-secondary:hover { border-color: var(--violet-light); color: var(--text); }
+
+  /* Hero character */
+  .hero-visual {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .character-glow {
+    position: absolute;
+    width: 300px; height: 300px;
+    background: radial-gradient(circle, rgba(124,58,237,.3) 0%, transparent 70%);
+    border-radius: 50%;
+    filter: blur(40px);
+    animation: glow-pulse 4s ease-in-out infinite alternate;
+  }
+
+  @keyframes glow-pulse {
+    0%   { transform: scale(.9); opacity: .6; }
+    100% { transform: scale(1.15); opacity: 1; }
+  }
+
+  .hero-visual img {
+    position: relative;
+    z-index: 2;
+    width: 320px;
+    max-width: 85%;
+    filter: drop-shadow(0 0 40px rgba(124,58,237,.3));
+    animation: character-float 6s ease-in-out infinite;
+  }
+
+  @keyframes character-float {
+    0%, 100% { transform: translateY(0); }
+    50%      { transform: translateY(-14px); }
+  }
+
+  /* ─── How It Works ─── */
+  .section {
+    padding: 6rem 2rem;
+    max-width: 1100px;
+    margin: 0 auto;
+  }
+
+  .section-label {
+    font-size: .75rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .12em;
+    color: var(--magenta);
+    margin-bottom: .75rem;
+  }
+
+  h2 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: clamp(1.75rem, 3.5vw, 2.5rem);
+    font-weight: 700;
+    letter-spacing: -.02em;
+    margin-bottom: 1rem;
+    line-height: 1.15;
+  }
+
+  .section-desc {
+    color: var(--text-dim);
+    max-width: 560px;
+    font-size: 1.05rem;
+    margin-bottom: 3.5rem;
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 2rem;
+    position: relative;
+  }
+
+  /* Connecting line */
+  .steps::before {
+    content: '';
+    position: absolute;
+    top: 56px;
+    left: calc(16.67% + 1rem);
+    right: calc(16.67% + 1rem);
+    height: 2px;
+    background: linear-gradient(90deg, var(--violet), var(--magenta), var(--amber));
+    opacity: .25;
+  }
+
+  .step {
+    text-align: center;
+    position: relative;
+  }
+
+  .step-icon {
+    width: 64px; height: 64px;
+    margin: 0 auto 1.5rem;
+    border-radius: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+    z-index: 2;
+  }
+
+  .step:nth-child(1) .step-icon { background: linear-gradient(135deg, rgba(124,58,237,.25), rgba(124,58,237,.1)); border: 1px solid rgba(124,58,237,.3); }
+  .step:nth-child(2) .step-icon { background: linear-gradient(135deg, rgba(232,121,249,.25), rgba(232,121,249,.1)); border: 1px solid rgba(232,121,249,.3); }
+  .step:nth-child(3) .step-icon { background: linear-gradient(135deg, rgba(251,191,36,.25), rgba(251,191,36,.1)); border: 1px solid rgba(251,191,36,.3); }
+
+  .step-icon svg { width: 28px; height: 28px; }
+
+  .step h3 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.15rem;
+    font-weight: 600;
+    margin-bottom: .5rem;
+  }
+
+  .step p {
+    color: var(--text-dim);
+    font-size: .925rem;
+    line-height: 1.6;
+    max-width: 280px;
+    margin: 0 auto;
+  }
+
+  /* ─── Features ─── */
+  .features-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 1.5rem;
+  }
+
+  .feature-card {
+    background: rgba(28,14,53,.6);
+    backdrop-filter: blur(12px);
+    border: 1px solid rgba(124,58,237,.12);
+    border-radius: var(--radius);
+    padding: 2rem;
+    transition: border-color .3s, transform .2s;
+  }
+
+  .feature-card:hover {
+    border-color: rgba(124,58,237,.3);
+    transform: translateY(-3px);
+  }
+
+  .feature-icon {
+    width: 44px; height: 44px;
+    border-radius: 12px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 1.25rem;
+    background: rgba(124,58,237,.12);
+    border: 1px solid rgba(124,58,237,.15);
+  }
+
+  .feature-icon svg { width: 22px; height: 22px; color: var(--violet-light); }
+
+  .feature-card h3 {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin-bottom: .5rem;
+  }
+
+  .feature-card p {
+    color: var(--text-dim);
+    font-size: .925rem;
+    line-height: 1.6;
+  }
+
+  /* ─── Social Proof Bar ─── */
+  .proof-bar {
+    padding: 3rem 2rem;
+    text-align: center;
+    border-top: 1px solid rgba(124,58,237,.08);
+    border-bottom: 1px solid rgba(124,58,237,.08);
+    background: rgba(18,6,39,.5);
+  }
+
+  .proof-stats {
+    display: flex;
+    justify-content: center;
+    gap: 4rem;
+    max-width: 800px;
+    margin: 0 auto;
+    flex-wrap: wrap;
+  }
+
+  .stat { text-align: center; }
+
+  .stat-number {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 2rem;
+    font-weight: 700;
+    background: linear-gradient(135deg, var(--violet-light), var(--magenta));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .stat-label {
+    font-size: .85rem;
+    color: var(--text-dim);
+    margin-top: .25rem;
+  }
+
+  /* ─── CTA Section ─── */
+  .cta-section {
+    padding: 6rem 2rem;
+    text-align: center;
+    position: relative;
+  }
+
+  .cta-box {
+    max-width: 640px;
+    margin: 0 auto;
+    background: linear-gradient(135deg, rgba(124,58,237,.12), rgba(232,121,249,.08));
+    border: 1px solid rgba(124,58,237,.2);
+    border-radius: 24px;
+    padding: 3.5rem 3rem;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .cta-box::before {
+    content: '';
+    position: absolute;
+    top: -50%; left: -50%;
+    width: 200%; height: 200%;
+    background: radial-gradient(circle at 30% 40%, rgba(124,58,237,.08) 0%, transparent 50%);
+    animation: cta-shimmer 8s ease-in-out infinite alternate;
+  }
+
+  @keyframes cta-shimmer {
+    0%   { transform: translate(0, 0); }
+    100% { transform: translate(10%, 5%); }
+  }
+
+  .cta-box > * { position: relative; z-index: 2; }
+
+  .cta-box h2 { margin-bottom: 1rem; }
+
+  .cta-box p {
+    color: var(--text-dim);
+    font-size: 1.05rem;
+    margin-bottom: 2rem;
+    max-width: 440px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .cta-box .btn-primary { font-size: 1.05rem; padding: 1rem 2.5rem; }
+
+  /* ─── Footer ─── */
+  footer {
+    text-align: center;
+    padding: 2.5rem 2rem;
+    color: var(--text-dim);
+    font-size: .85rem;
+    border-top: 1px solid rgba(124,58,237,.08);
+  }
+
+  footer a { color: var(--violet-light); text-decoration: none; }
+  footer a:hover { text-decoration: underline; }
+
+  /* ─── Scroll animations ─── */
+  .reveal {
+    opacity: 0;
+    transform: translateY(30px);
+    transition: opacity .7s ease, transform .7s ease;
+  }
+
+  .reveal.visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  /* ─── Responsive ─── */
+  @media (max-width: 768px) {
+    .hero-inner {
+      grid-template-columns: 1fr;
+      text-align: center;
+      gap: 2.5rem;
+    }
+
+    .hero-text { max-width: 100%; order: 2; }
+    .hero-visual { order: 1; }
+    .hero-desc { margin-left: auto; margin-right: auto; }
+    .hero-actions { justify-content: center; }
+    .hero-visual img { width: 220px; }
+
+    .steps { grid-template-columns: 1fr; gap: 2.5rem; }
+    .steps::before { display: none; }
+
+    .features-grid { grid-template-columns: 1fr; }
+
+    .proof-stats { gap: 2rem; }
+
+    nav { padding: 1rem 1.25rem; }
+    .nav-links a:not(.btn-nav) { display: none; }
+
+    .cta-box { padding: 2.5rem 1.5rem; }
+  }
+
+  /* ─── Accessibility ─── */
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+    }
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--violet-light);
+    outline-offset: 3px;
+  }
 </style>
 </head>
 <body>
 
-<!-- Ambient Orbs -->
-<div class="orb orb-cyan"></div>
-<div class="orb orb-amber"></div>
-<div class="orb orb-pink"></div>
-
-<!-- Navigation -->
-<nav>
-  <div class="container">
-    <a href="#" class="logo">
-      <span class="dot"></span>
-      visema
-    </a>
-    <ul class="nav-links">
-      <li><a href="#features">Features</a></li>
-      <li><a href="#how">How It Works</a></li>
-      <li><a href="#stack">Stack</a></li>
-      <li><a href="https://github.com/dilidin2/visema" target="_blank" rel="noopener">GitHub</a></li>
-    </ul>
+<!-- ═══ Animated Background ═══ -->
+<div class="bg-canvas">
+  <div class="bg-grid"></div>
+  <div class="signal-rings">
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div class="ring"></div>
+    <div class="ring"></div>
   </div>
-</nav>
+</div>
 
-<!-- Hero -->
-<section class="hero">
-  <div class="container">
-    <div class="hero-badge">
-      <span class="badge-dot"></span>
-      Local-first · No cloud · No API keys
+<div class="page">
+
+  <!-- ═══ Nav ═══ -->
+  <nav>
+    <a href="#" class="nav-logo">vis<span>ema</span></a>
+    <div class="nav-links">
+      <a href="#how">How It Works</a>
+      <a href="#features">Features</a>
+      <a href="https://github.com/dilidin2/visema" target="_blank" rel="noopener" class="btn-nav">Download Free</a>
     </div>
-    <h1>
-      Let your viewers<br>
-      <span class="gradient">spend points to</span><br>
-      show GIFs & play sounds
-    </h1>
-    <p>
-      A local Twitch bot that turns Channel Points redemptions into live GIFs and audio clips on your stream — powered by an OBS Browser Source overlay.
-    </p>
-    <div class="hero-actions">
-      <a href="https://github.com/dilidin2/visema" class="btn btn-primary" target="_blank" rel="noopener">
-        <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-        View on GitHub
-      </a>
-      <a href="#how" class="btn btn-secondary">
-        How it works
-      </a>
+  </nav>
+
+  <!-- ═══ Hero ═══ -->
+  <section class="hero">
+    <div class="hero-inner">
+      <div class="hero-text">
+        <div class="eyebrow">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          Free &amp; Open Source — For Twitch Streamers
+        </div>
+        <h1>Your viewers should <span class="accent">control the show.</span></h1>
+        <p class="hero-desc">
+          Let your chat spend Channel Points to trigger GIFs and sound effects live on your stream. No coding, no cloud — just a free tool that plugs straight into OBS.
+        </p>
+        <div class="hero-actions">
+          <a href="https://github.com/dilidin2/visema" target="_blank" rel="noopener" class="btn-primary">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+            Get Visema
+          </a>
+          <a href="#how" class="btn-secondary">See how it works</a>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="character-glow"></div>
+        <img src="visema.png" alt="Visema mascot — a chibi character in purple tones">
+      </div>
     </div>
-  </div>
-</section>
+  </section>
 
-<!-- Features -->
-<section id="features">
-  <div class="container">
-    <p class="section-label">Features</p>
-    <h2 class="section-title">Everything your stream needs,<br>nothing it doesn't</h2>
-    <p class="section-desc">Built for streamers who want a clean, local-first experience with zero external dependencies.</p>
+  <!-- ═══ How It Works ═══ -->
+  <section class="section" id="how">
+    <div class="reveal">
+      <p class="section-label">How It Works</p>
+      <h2>Three steps. That's it.</h2>
+      <p class="section-desc">Set up once, then sit back and watch your chat light up the stream.</p>
+    </div>
+    <div class="steps">
+      <div class="step reveal">
+        <div class="step-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#a78bfa" stroke-width="2" stroke-linecap="round"><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 00-3-3.87"/><path d="M16 3.13a4 4 0 010 7.75"/></svg>
+        </div>
+        <h3>Your viewers redeem</h3>
+        <p>Chat uses Channel Points to request a GIF or play a sound — just like any other reward on your channel.</p>
+      </div>
+      <div class="step reveal">
+        <div class="step-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#e879f9" stroke-width="2" stroke-linecap="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+        </div>
+        <h3>Visema queues it</h3>
+        <p>Requests line up automatically. Nothing overlaps, and invalid ones get refunded — zero headaches.</p>
+      </div>
+      <div class="step reveal">
+        <div class="step-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fbbf24" stroke-width="2" stroke-linecap="round"><polygon points="23 7 16 12 23 17 23 7"/><rect x="1" y="5" width="15" height="14" rx="2"/></svg>
+        </div>
+        <h3>It appears on stream</h3>
+        <p>GIFs and sounds play right on your OBS overlay. Your audience sees it live, in real time.</p>
+      </div>
+    </div>
+  </section>
 
+  <!-- ═══ Features ═══ -->
+  <section class="section" id="features">
+    <div class="reveal">
+      <p class="section-label">Why Visema</p>
+      <h2>Built for streamers, not engineers.</h2>
+      <p class="section-desc">Everything you need to make your chat more interactive — nothing you don't.</p>
+    </div>
     <div class="features-grid">
-      <div class="feature-card">
-        <div class="feature-icon cyan">🎬</div>
-        <h3>GIF Redemptions</h3>
-        <p>Viewers paste a direct Giphy CDN link and the GIF plays on your OBS overlay with smooth fade-in/out animations. Invalid URLs are auto-cancelled with a point refund.</p>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        </div>
+        <h3>Runs entirely on your machine</h3>
+        <p>No cloud, no third-party servers. Your stream data never leaves your computer — fast and private.</p>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon amber">🔊</div>
-        <h3>Audio Redemptions</h3>
-        <p>Viewers type a sound name and the bot plays it from your local <code>sounds/</code> folder. No external APIs — just drop MP3, OGG, or WAV files and you're set.</p>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
+        </div>
+        <h3>Configurable to your taste</h3>
+        <p>Adjust GIF size, queue limits, cooldown timers, volume — tweak everything through a simple config file.</p>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon pink">🔐</div>
-        <h3>Two-Account Design</h3>
-        <p>Your broadcaster account handles EventSub redemptions. A separate bot account sends chat messages. Clean separation, no identity mixing.</p>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+        </div>
+        <h3>GIFs and sounds in one queue</h3>
+        <p>A single smart queue handles both media types. No overlapping, no chaos — just smooth playback.</p>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon green">⚡</div>
-        <h3>Unified Queue</h3>
-        <p>GIFs and audio share a single FIFO queue with configurable cooldown and max size. No overlapping, no chaos — orderly processing every time.</p>
+      <div class="feature-card reveal">
+        <div class="feature-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+        </div>
+        <h3>Zero maintenance</h3>
+        <p>Set it up once and forget about it. Visema stays connected to Twitch and OBS in the background.</p>
       </div>
+    </div>
+  </section>
 
-      <div class="feature-card">
-        <div class="feature-icon cyan">🖥️</div>
-        <h3>OBS Browser Source</h3>
-        <p>The overlay connects via WebSocket to your local server. Add it as a Browser Source in OBS and it just works — no manual configuration in OBS needed.</p>
+  <!-- ═══ Proof Bar ═══ -->
+  <div class="proof-bar">
+    <div class="proof-stats reveal">
+      <div class="stat">
+        <div class="stat-number">100%</div>
+        <div class="stat-label">Free &amp; open source</div>
       </div>
-
-      <div class="feature-card">
-        <div class="feature-icon amber">💬</div>
-        <h3>Chat Commands</h3>
-        <p><code>!gif</code> for help, <code>!sound</code> for instructions, <code>!soundlist</code> for the full sound list. All responses are configurable in <code>config.yaml</code>.</p>
+      <div class="stat">
+        <div class="stat-number">0</div>
+        <div class="stat-label">Cloud dependencies</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">2</div>
+        <div class="stat-label">Media types (GIF + Sound)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-number">∞</div>
+        <div class="stat-label">Possibilities for your stream</div>
       </div>
     </div>
   </div>
-</section>
 
-<!-- How It Works -->
-<section id="how">
-  <div class="container">
-    <p class="section-label">How It Works</p>
-    <h2 class="section-title">From redemption to overlay<br>in four steps</h2>
-    <p class="section-desc">A viewer spends Channel Points — here's what happens behind the scenes.</p>
-
-    <div class="how-it-works">
-      <div class="flow-steps">
-        <div class="flow-step">
-          <div class="flow-num">1</div>
-          <div class="flow-content">
-            <h3>Viewer redeems</h3>
-            <p>A viewer spends Channel Points on your stream, providing a GIF URL or sound name as input. Twitch fires an EventSub event to Visema.</p>
-          </div>
-        </div>
-        <div class="flow-step">
-          <div class="flow-num">2</div>
-          <div class="flow-content">
-            <h3>Validation</h3>
-            <p>GIF URLs are checked against Giphy's CDN domains. Sound names are normalized and looked up in the local index. Invalid requests are cancelled with a refund.</p>
-          </div>
-        </div>
-        <div class="flow-step">
-          <div class="flow-num">3</div>
-          <div class="flow-content">
-            <h3>Queue & broadcast</h3>
-            <p>Valid requests enter the FIFO queue. The worker dequeues and broadcasts the payload via WebSocket to the OBS overlay.</p>
-          </div>
-        </div>
-        <div class="flow-step">
-          <div class="flow-num">4</div>
-          <div class="flow-content">
-            <h3>Overlay plays</h3>
-            <p>The OBS Browser Source renders the GIF with fade animations or plays the audio clip. Audio sends an ack back when done, triggering the cooldown.</p>
-          </div>
-        </div>
-      </div>
+  <!-- ═══ CTA ═══ -->
+  <section class="cta-section">
+    <div class="cta-box reveal">
+      <h2>Ready to make your chat the star?</h2>
+      <p>Grab Visema from GitHub, drop it into OBS, and watch your viewers light up your stream — for free.</p>
+      <a href="https://github.com/dilidin2/visema" target="_blank" rel="noopener" class="btn-primary">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M12 .297c-6.63 0-12 5.373-12 12 0 5.303 3.438 9.8 8.205 11.385.6.113.82-.258.82-.577 0-.285-.01-1.04-.015-2.04-3.338.724-4.042-1.61-4.042-1.61C4.422 18.07 3.633 17.7 3.633 17.7c-1.087-.744.084-.729.084-.729 1.205.084 1.838 1.236 1.838 1.236 1.07 1.835 2.809 1.305 3.495.998.108-.776.417-1.305.76-1.605-2.665-.3-5.466-1.332-5.466-5.93 0-1.31.465-2.38 1.235-3.22-.135-.303-.54-1.523.105-3.176 0 0 1.005-.322 3.3 1.23.96-.267 1.98-.399 3-.405 1.02.006 2.04.138 3 .405 2.28-1.552 3.285-1.23 3.285-1.23.645 1.653.24 2.873.12 3.176.765.84 1.23 1.91 1.23 3.22 0 4.61-2.805 5.625-5.475 5.92.42.36.81 1.096.81 2.22 0 1.606-.015 2.896-.015 3.286 0 .315.21.69.825.57C20.565 22.092 24 17.592 24 12.297c0-6.627-5.373-12-12-12"/></svg>
+        Download on GitHub
+      </a>
     </div>
+  </section>
 
-    <!-- Code Example -->
-    <div class="code-section">
-      <p class="section-label">Setup</p>
-      <h2 class="section-title">Up and running<br>in minutes</h2>
-      <p class="section-desc">Install dependencies, configure two files, and you're live.</p>
+  <!-- ═══ Footer ═══ -->
+  <footer>
+    <p>Visema is free and open-source under the <a href="https://github.com/dilidin2/visema/blob/main/LICENSE">MIT License</a>. Built with care for streamers.</p>
+  </footer>
 
-      <div class="code-block">
-        <div class="code-header">
-          <div class="dots">
-            <span class="dot"></span>
-            <span class="dot"></span>
-            <span class="dot"></span>
-          </div>
-          <span class="filename">Terminal</span>
-        </div>
-        <div class="code-body">
-<pre><span class="cm"># Install uv (dependency manager)</span>
-curl -LsSf https://astral.sh/uv/install.sh | sh
+</div>
 
-<span class="cm"># Clone &amp; set up</span>
-git clone https://github.com/dilidin2/visema.git
-<span class="fn">cd</span> visema
+<script>
+  // ─── Generate floating orbs ───
+  (() => {
+    const canvas = document.querySelector('.bg-canvas');
+    const colors = ['rgba(124,58,237,.6)', 'rgba(167,139,250,.5)', 'rgba(232,121,249,.4)', 'rgba(251,191,36,.3)'];
+    for (let i = 0; i < 20; i++) {
+      const orb = document.createElement('div');
+      orb.className = 'orb';
+      const size = Math.random() * 4 + 2;
+      orb.style.cssText = `
+        width: ${size}px; height: ${size}px;
+        left: ${Math.random() * 100}%;
+        bottom: -${Math.random() * 20}%;
+        background: ${colors[Math.floor(Math.random() * colors.length)]};
+        animation-duration: ${Math.random() * 25 + 20}s;
+        animation-delay: ${Math.random() * 20}s;
+      `;
+      canvas.appendChild(orb);
+    }
 
-uv venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
+    // Diamond shapes
+    for (let i = 0; i < 8; i++) {
+      const d = document.createElement('div');
+      d.className = 'diamond';
+      d.style.cssText = `
+        left: ${Math.random() * 100}%;
+        top: ${Math.random() * 100}%;
+        animation-duration: ${Math.random() * 15 + 15}s;
+        animation-delay: ${Math.random() * 10}s;
+      `;
+      canvas.appendChild(d);
+    }
+  })();
 
-<span class="cm"># Configure credentials</span>
-cp .env.example .env
-cp config.yaml.example config.yaml
-
-<span class="cm"># First run — authorizes both accounts via browser</span>
-python -m visema.main --setup
-
-<span class="cm"># Normal run</span>
-python -m visema.main</pre>
-        </div>
-      </div>
-    </div>
-  </div>
-</section>
-
-<!-- Tech Stack -->
-<section id="stack">
-  <div class="container">
-    <p class="section-label">Tech Stack</p>
-    <h2 class="section-title">Built with tools<br>that just work</h2>
-    <p class="section-desc">A lean, modern stack with zero external API dependencies.</p>
-
-    <div class="tech-grid">
-      <span class="tech-tag"><span class="tech-dot" style="background: var(--cyan)"></span> Python</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #3178c6"></span> twitchAPI</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #009688"></span> FastAPI</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #54687a"></span> uvicorn</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #ff6f00"></span> websockets</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #0078d7"></span> python-dotenv</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #1168b6"></span> pyyaml</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: var(--amber)"></span> uv</span>
-      <span class="tech-tag"><span class="tech-dot" style="background: #9b59b6"></span> OBS Studio</span>
-    </div>
-  </div>
-</section>
-
-<!-- Footer -->
-<footer>
-  <div class="container">
-    <p>
-      Built by <a href="https://github.com/dilidin2" target="_blank" rel="noopener">dilidin2</a> ·
-      <a href="https://github.com/dilidin2/visema" target="_blank" rel="noopener">GitHub</a> ·
-      MIT License
-    </p>
-  </div>
-</footer>
+  // ─── Scroll reveal ───
+  (() => {
+    const els = document.querySelectorAll('.reveal');
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(e => {
+        if (e.isIntersecting) {
+          e.target.classList.add('visible');
+          observer.unobserve(e.target);
+        }
+      });
+    }, { threshold: 0.15 });
+    els.forEach(el => observer.observe(el));
+  })();
+</script>
 
 </body>
 </html>

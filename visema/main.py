@@ -13,7 +13,6 @@ Modes:
     → broadcaster: EventSub + redemption management
     → bot: chat messages only (token_bot.json)
 """
-
 import argparse
 import asyncio
 import logging
@@ -46,15 +45,31 @@ def setup_logging(verbose: bool = False) -> None:
     )
 
 
-async def start_server(settings) -> asyncio.Task:
-    """Start the FastAPI/uvicorn server as a task in the current event loop."""
+async def start_server(settings) -> tuple[asyncio.Task, uvicorn.Server]:
+    """Start the FastAPI/uvicorn server as a task in the current event loop.
+
+    Returns (task, server) so the caller can signal graceful shutdown via
+    server.should_exit before cancelling the task.
+    """
     config = uvicorn.Config(
         server_app.create_app(),
         host="127.0.0.1",
         port=settings.overlay.port,
         log_level="info",
         access_log=False,
+        loop="asyncio",
+        # Disable lifespan — we don't use startup/shutdown hooks, and the
+        # Starlette lifespan task blocks on receive() when cancelled,
+        # leaving a CancelledError in the logs.
+        lifespan="off",
     )
+    # Patch: skip capture_signals so asyncio.run() owns SIGINT/SIGTERM.
+    # Without this, uvicorn.capture_signals() installs its own signal.signal()
+    # handler which swallows the first Ctrl+C and hangs indefinitely when a
+    # WebSocket connection (OBS overlay) is open. The patch makes it a no-op.
+    from contextlib import nullcontext
+    uvicorn.Server.capture_signals = lambda self: nullcontext()
+
     server = uvicorn.Server(config)
     task = asyncio.create_task(server.serve(), name="uvicorn-server")
 
@@ -74,7 +89,7 @@ async def start_server(settings) -> asyncio.Task:
     logger.info("Set width/height to your canvas (e.g. 1920x1080), enable 'Allow transparency'")
     logger.info("─────────────────────────────────────────────────────────────")
 
-    return task
+    return task, server
 
 
 async def _ensure_auth(
@@ -115,7 +130,7 @@ async def run(use_bot: bool = False) -> None:
     )
 
     # ── Start overlay server (same event loop as queue worker) ─
-    server_task = await start_server(settings)
+    server_task, server = await start_server(settings)
 
     # ── Setup media queue ───────────────────────────────
     max_queue = max(settings.gif.max_queue_size, settings.audio.max_queue_size)
@@ -171,9 +186,16 @@ async def run(use_bot: bool = False) -> None:
 
     # ── Setup bot account or reuse broadcaster ──────────
     if use_bot:
+        from twitchAPI.type import AuthScope
+
+        # Bot account needs USER_BOT to join another channel's chat via EventSub.
+        # Combined with the base scopes (read/write chat + redemptions).
+        bot_scopes = auth_module.REQUIRED_SCOPES + [AuthScope.USER_BOT]
+
         bot_service = auth_module.TwitchService(
             client_id=settings.twitch_client_id,
             token_path=BOT_TOKEN_PATH,
+            scopes=bot_scopes,
         )
         try:
             await bot_service.connect()
@@ -195,7 +217,32 @@ async def run(use_bot: bool = False) -> None:
         bot_user_id = broadcaster_id
         chat_client = broadcaster_service.twitch
 
-    # ── Start EventSub listener ─────────────────────────
+    # ── Create and start EventSub instances ─────────────
+    from twitchAPI.eventsub.websocket import EventSubWebsocket
+
+    # Broadcaster EventSub: used for redemptions (always).
+    # In single-account mode, also shared with the chat listener.
+    broadcaster_eventsub = EventSubWebsocket(broadcaster_service.twitch)
+    broadcaster_service.eventsub = broadcaster_eventsub
+    broadcaster_service._external_eventsub = broadcaster_eventsub
+    broadcaster_eventsub.start()
+    logger.info("Broadcaster EventSub started")
+
+    # Bot EventSub: only needed in dual-account mode for chat messages.
+    # Each Twitch client can only have one EventSubWebsocket (thread-bound),
+    # so the bot gets its own separate connection.
+    bot_eventsub = None
+    if use_bot:
+        bot_eventsub = EventSubWebsocket(bot_service.twitch)
+        bot_service.eventsub = bot_eventsub
+        bot_service._external_eventsub = bot_eventsub
+        bot_eventsub.start()
+        logger.info("Bot EventSub started")
+
+    # ── Start EventSub listener (redemptions)
+    # EventSub connections are already started above — start_eventsub()
+    # only handles subscription + retry loop, not the connection itself.
+    #──────────────────────────────────────────────────────
     eventsub_task = await eventsub_module.start_eventsub(
         twitch_service=broadcaster_service,
         queue=media_queue,
@@ -203,12 +250,19 @@ async def run(use_bot: bool = False) -> None:
         channel_id=broadcaster_id,
         bot_user_id=bot_user_id,
         chat_client=chat_client if use_bot else None,
+        eventsub_instance=broadcaster_eventsub,
     )
 
-    # ── Start chat listener ─────────────────────────────
+    # ── Start chat listener (EventSub-based)
+    # Both EventSub connections are already running at this point,
+    # so subscribe calls in both eventsub.py and chat.py are safe.
+    #──────────────────────────────────────────────────────
+    # Single-account: reuse broadcaster EventSub.
+    # Dual-account: use bot's own EventSub.
+    chat_eventsub = broadcaster_eventsub if not use_bot else bot_eventsub
     chat_task = await chat_module.start_chat_listener(
         twitch_client=chat_client,
-        target_channel_name=broadcaster_name,
+        eventsub=chat_eventsub,
         target_channel_id=broadcaster_id,
         bot_user_id=bot_user_id,
         command_settings=settings.commands,
@@ -217,10 +271,6 @@ async def run(use_bot: bool = False) -> None:
     logger.info("Visema is running! Press Ctrl+C to stop.")
 
     # ── Run until interrupted ───────────────────────────
-    disconnectables = [broadcaster_service]
-    if use_bot:
-        disconnectables.append(bot_service)
-
     try:
         done, pending = await asyncio.wait(
             [eventsub_task, chat_task, server_task],
@@ -230,10 +280,36 @@ async def run(use_bot: bool = False) -> None:
         pass
     finally:
         logger.info("Shutting down...")
+
+        # Signal uvicorn to exit its run loop so it closes listeners and
+        # cleans up internal threads — without this, a brute-force cancel()
+        # leaves background threads alive and Python refuses to exit.
+        server.should_exit = True
+
         for task in [eventsub_task, chat_task, server_task]:
             task.cancel()
-        for svc in disconnectables:
+        # Give all tasks a chance to finish (uvicorn needs it for thread cleanup)
+        await asyncio.sleep(0.5)
+
+        # Stop EventSub connections (external instances managed by main.py)
+        try:
+            await broadcaster_eventsub.stop()
+            logger.info("Broadcaster EventSub stopped")
+        except Exception:
+            logger.exception("Error stopping broadcaster EventSub")
+        if bot_eventsub is not None:
+            try:
+                await bot_eventsub.stop()
+                logger.info("Bot EventSub stopped")
+            except Exception:
+                logger.exception("Error stopping bot EventSub")
+
+        # Disconnect Twitch clients (token cleanup, no EventSub — already done above)
+        for svc in [broadcaster_service]:
             await svc.disconnect()
+        if use_bot:
+            await bot_service.disconnect()
+
         await media_queue.stop()
         logger.info("Visema stopped.")
 

@@ -30,24 +30,51 @@ _DEFAULT_TOKEN_PATH = Path("token.json")
 DEVICE_CODE_URL = "https://id.twitch.tv/oauth2/device"
 TOKEN_URL = "https://id.twitch.tv/oauth2/token"
 
-# All scopes needed: EventSub + chat + redemption management
+# Scopes needed for all accounts (broadcaster + bot):
+# - channel:read:redemptions / channel:manage:redemptions → Channel Points redemptions
+# - user:read:chat → subscribe to channel.chat.message via EventSub WebSocket
+# - user:write:chat → send messages via Send Chat Message API
+#
+# IRC-style scopes (chat:edit, chat:read) are no longer needed — chat now runs
+# entirely through EventSub + Send Chat Message API.
+#
+# NOTE on dual-account mode:
+#   The bot account also needs USER_BOT scope to join another channel's chat
+#   via EventSub. If you use dual-account mode, pass scopes explicitly to
+#   TwitchService(scopes=[..., AuthScope.USER_BOT]).
 REQUIRED_SCOPES = [
     AuthScope.CHANNEL_READ_REDEMPTIONS,
     AuthScope.CHANNEL_MANAGE_REDEMPTIONS,
-    AuthScope.CHAT_EDIT,
-    AuthScope.CHAT_READ,
+    AuthScope.USER_READ_CHAT,
     AuthScope.USER_WRITE_CHAT,
 ]
 
 
 class TwitchService:
-    """Manages single-account Twitch auth (DCF) and EventSub connection."""
+    """Manages per-account Twitch auth (DCF) and EventSub connection.
 
-    def __init__(self, client_id: str, token_path: str = "token.json"):
+    Args:
+        client_id: The Twitch app client ID.
+        token_path: Path to store/load the OAuth token file.
+        scopes: Optional list of AuthScope. Defaults to REQUIRED_SCOPES.
+                Pass custom scopes when the account needs different permissions
+                (e.g. bot account with USER_BOT for dual-account mode).
+    """
+
+    def __init__(
+        self,
+        client_id: str,
+        token_path: str = "token.json",
+        scopes: Optional[list] = None,
+        eventsub: Optional[EventSubWebsocket] = None,
+    ):
         self.client_id = client_id
         self.token_path = Path(token_path)
+        self.scopes = scopes if scopes is not None else REQUIRED_SCOPES
         self.twitch: Optional[Twitch] = None
-        self.eventsub: Optional[EventSubWebsocket] = None
+        # If an external EventSub is provided, use it; otherwise create one on demand.
+        self._external_eventsub = eventsub
+        self.eventsub: Optional[EventSubWebsocket] = eventsub
 
         # DCF state
         self._auth_status: str = "idle"  # idle | pending | success | expired | denied
@@ -62,7 +89,9 @@ class TwitchService:
             json.dump({"token": token, "refresh": refresh_token}, f)
 
     async def _get_device_code(self) -> dict:
-        scope_str = " ".join(s.value if hasattr(s, "value") else str(s) for s in REQUIRED_SCOPES)
+        scope_str = " ".join(
+            s.value if hasattr(s, "value") else str(s) for s in self.scopes
+        )
         data = {"client_id": self.client_id, "scope": scope_str}
         async with ClientSession() as session:
             async with session.post(DEVICE_CODE_URL, data=data) as resp:
@@ -73,7 +102,9 @@ class TwitchService:
     ) -> tuple[str, str]:
         """Poll Twitch for the user token after they authorize."""
         current_interval = interval
-        scope_str = " ".join(s.value if hasattr(s, "value") else str(s) for s in REQUIRED_SCOPES)
+        scope_str = " ".join(
+            s.value if hasattr(s, "value") else str(s) for s in self.scopes
+        )
         async with ClientSession() as session:
             while True:
                 data = {
@@ -139,7 +170,7 @@ class TwitchService:
         logger.info("✓ Tokens saved to %s", self.token_path)
 
         # Apply user authentication to the Twitch client
-        await self.twitch.set_user_authentication(token, REQUIRED_SCOPES, refresh_token)
+        await self.twitch.set_user_authentication(token, self.scopes, refresh_token)
         logger.info("✓ User authentication set on Twitch client")
 
         self._auth_status = "success"
@@ -213,7 +244,7 @@ class TwitchService:
                     creds = json.load(f)
                 logger.info("Loading existing tokens from %s...", token_file)
                 await self.twitch.set_user_authentication(
-                    creds["token"], REQUIRED_SCOPES, creds["refresh"]
+                    creds["token"], self.scopes, creds["refresh"]
                 )
                 logger.info("✓ Tokens loaded from %s", token_file)
             except Exception as e:
@@ -223,7 +254,7 @@ class TwitchService:
                 )
                 token, refresh_token = await self._do_device_auth()
                 await self.twitch.set_user_authentication(
-                    token, REQUIRED_SCOPES, refresh_token
+                    token, self.scopes, refresh_token
                 )
         else:
             logger.info("No %s found — start Device Code Flow to authorize", self.token_path)
@@ -234,13 +265,20 @@ class TwitchService:
         """Re-authenticate via Device Code Flow (e.g. after a 401)."""
         logger.warning("Re-authenticating via Device Code Flow...")
         token, refresh_token = await self._do_device_auth()
-        await self.twitch.set_user_authentication(token, REQUIRED_SCOPES, refresh_token)
+        await self.twitch.set_user_authentication(token, self.scopes, refresh_token)
         with open(self.token_path, "w") as f:
             json.dump({"token": token, "refresh": refresh_token}, f)
         logger.info("✓ Re-authenticated successfully")
 
     async def authenticate_user(self) -> None:
-        """Create the EventSub WebSocket client (call after connect())."""
+        """Ensure the EventSub WebSocket client exists (call after connect()).
+
+        If an external EventSub was provided at construction time, it is reused.
+        Otherwise a new one is created from the Twitch client.
+        """
+        if self._external_eventsub is not None:
+            logger.info("Reusing externally-provided EventSub client")
+            return
         logger.info("Creating EventSub client...")
         self.eventsub = EventSubWebsocket(twitch=self.twitch)
         logger.info("EventSub client created")
@@ -279,7 +317,9 @@ class TwitchService:
     # ── Lifecycle ─────────────────────────────────────────────────────────────
 
     async def disconnect(self) -> None:
-        if self.eventsub:
+        # Only stop the EventSub if we created it internally. External EventSubs
+        # are managed by the caller (main.py).
+        if self._external_eventsub is None and self.eventsub is not None:
             logger.info("Stopping EventSub client...")
             await self.eventsub.stop()
             self.eventsub = None

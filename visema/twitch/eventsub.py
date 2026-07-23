@@ -373,11 +373,22 @@ async def start_eventsub(
     channel_id: str,
     bot_user_id: str,
     chat_client=None,
+    eventsub_instance=None,
 ) -> asyncio.Task:
     """Start the EventSub WebSocket listener.
 
-    Uses the same TwitchService for EventSub + chat (single account).
-    Returns the asyncio Task running the listener.
+    Args:
+        twitch_service: TwitchService for API calls and auth.
+        queue: MediaQueue for enqueuing redemptions.
+        settings: Application settings.
+        channel_id: Broadcaster's channel ID.
+        bot_user_id: User ID for chat messages (bot or broadcaster).
+        chat_client: Optional separate Twitch client for chat (dual-account mode).
+        eventsub_instance: Optional pre-created EventSubWebsocket. If not provided,
+                           one is created from twitch_service.twitch.
+
+    Returns:
+        An asyncio.Task running the listener.
     """
     from twitchAPI.eventsub.websocket import EventSubWebsocket
 
@@ -403,46 +414,67 @@ async def start_eventsub(
         )
 
     async def _run_eventsub():
-        max_retries = 5
-        for attempt in range(max_retries):
-            try:
-                await handler.resolve_reward_ids()
-                await handler.ensure_rewards_exist()
-
-                eventsub = EventSubWebsocket(twitch_service.twitch)
-                logger.info("Starting EventSub listener for channel %s", channel_id)
-                eventsub.start()
-                await _subscribe(eventsub)
-                logger.info("✓ Listening for channel point redemptions via EventSub")
-
+        eventsub = None
+        owns_eventsub = True  # False if eventsub_instance was passed in
+        try:
+            max_retries = 5
+            for attempt in range(max_retries):
                 try:
-                    while eventsub._running:
-                        await asyncio.sleep(1)
-                except asyncio.CancelledError:
-                    break
-                except Exception:
-                    logger.exception("EventSub WebSocket crashed")
-            except Exception as e:
-                error_str = str(e)
-                if any(k in error_str for k in ("401", "Unauthorized", "needs user authentication")):
-                    logger.warning("Auth error during EventSub — re-authenticating...")
-                    await twitch_service.reauthenticate_if_needed()
-                    await asyncio.sleep(2 ** attempt)
-                    continue
-                elif "already subscribed" in error_str.lower():
+                    await handler.resolve_reward_ids()
+                    await handler.ensure_rewards_exist()
+
+                    if eventsub_instance is not None:
+                        eventsub = eventsub_instance
+                        owns_eventsub = False
+                    else:
+                        eventsub = EventSubWebsocket(twitch_service.twitch)
+                        eventsub.start()
+                    # Note: when eventsub_instance is passed (shared with chat
+                    # listener), it is already started by main.py before any
+                    # task is created. When creating our own instance, we start
+                    # it here to keep the self-contained path working.
+                    logger.info("Starting EventSub listener for channel %s", channel_id)
+                    await _subscribe(eventsub)
+                    logger.info("✓ Listening for channel point redemptions via EventSub")
+
                     try:
                         while eventsub._running:
                             await asyncio.sleep(1)
                     except asyncio.CancelledError:
                         break
-                else:
-                    logger.error("EventSub error: %s", e)
-                    await asyncio.sleep(2 ** min(attempt, 4))
-                    continue
+                    except Exception:
+                        logger.exception("EventSub WebSocket crashed")
+                except Exception as e:
+                    error_str = str(e)
+                    if any(k in error_str for k in ("401", "Unauthorized", "needs user authentication")):
+                        logger.warning("Auth error during EventSub — re-authenticating...")
+                        await twitch_service.reauthenticate_if_needed()
+                        await asyncio.sleep(2 ** attempt)
+                        continue
+                    elif "already subscribed" in error_str.lower():
+                        try:
+                            while eventsub._running:
+                                await asyncio.sleep(1)
+                        except asyncio.CancelledError:
+                            break
+                    else:
+                        logger.error("EventSub error: %s", e)
+                        await asyncio.sleep(2 ** min(attempt, 4))
+                        continue
 
-            wait_time = 2 ** min(attempt, 4)
-            logger.info("EventSub disconnected, retrying in %ds...", wait_time)
-            await asyncio.sleep(wait_time)
+                wait_time = 2 ** min(attempt, 4)
+                logger.info("EventSub disconnected, retrying in %ds...", wait_time)
+                await asyncio.sleep(wait_time)
+        finally:
+            # Only stop the EventSubWebsocket if we own it. If it was passed
+            # in (shared with chat listener), don't stop it — the caller is
+            # responsible for cleanup.
+            if owns_eventsub and eventsub is not None:
+                try:
+                    await eventsub.stop()
+                    logger.info("EventSubWebsocket stopped cleanly")
+                except Exception:
+                    logger.exception("Error stopping EventSubWebsocket")
 
         logger.info("EventSub listener stopped")
 

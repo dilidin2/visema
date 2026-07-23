@@ -36,14 +36,10 @@ uv sync
 cp config.yaml.example config.yaml
 # Edit config.yaml — set reward names to match your Twitch Channel Points rewards
 
-# 4. Set up .env with your broadcaster ID
-cp .env.example .env
-# Edit .env — fill in TWITCH_BROADCASTER_ID (your numeric channel ID)
-
-# 5. Add sound files to the sounds/ folder
+# 4. Add sound files to the sounds/ folder
 cp my_sounds/*.mp3 sounds/
 
-# 6. Run — first launch triggers Device Code authentication
+# 5. Run — first launch triggers Device Code authentication
 uv run visema
 ```
 
@@ -73,10 +69,6 @@ The overlay connects automatically via WebSocket — no additional configuration
 ```ini
 # Optional — set only if you fork with your own Twitch app
 # TWITCH_CLIENT_ID=your_client_id_here
-
-# Required — your numeric channel ID (not username!)
-# Find it at: https://www.streamweasels.com/tools/convert-twitch-username-to-user-id/
-TWITCH_BROADCASTER_ID=123456789
 ```
 
 ### `config.yaml` *(safe to commit)*
